@@ -108,6 +108,7 @@ describe('career UI screens', () => {
     const tabs = screen.getAllByRole('tab');
     expect(tabs.map((t) => t.textContent)).toEqual([
       'Dashboard',
+      'MyCareer',
       'GM Desk',
       'Playoffs',
       'Draft Room',

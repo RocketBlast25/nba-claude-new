@@ -6,10 +6,12 @@ import { OffseasonHub } from './OffseasonHub';
 import { DraftRoom } from './DraftRoom';
 import { RotationEditor, TradeBuilder, FreeAgencyPanel } from './GmDesk';
 import { SavesPanel } from './SavesPanel';
+import { MyCareerDashboard } from './MyCareerDashboard';
 
 /** Tab order is the display order. Each id maps to one panel below. */
 const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
+  { id: 'mycareer', label: 'MyCareer' },
   { id: 'gm', label: 'GM Desk' },
   { id: 'playoffs', label: 'Playoffs' },
   { id: 'draft', label: 'Draft Room' },
@@ -82,6 +84,9 @@ export function App() {
       </div>
       <TabPanel id="dashboard" active={active}>
         {career ? <CareerDashboard /> : <p>Start a career to begin.</p>}
+      </TabPanel>
+      <TabPanel id="mycareer" active={active}>
+        {career ? <MyCareerDashboard /> : <p>Start a career to begin.</p>}
       </TabPanel>
       <TabPanel id="gm" active={active}>
         {career ? <GmDesk /> : <p>Start a career to begin.</p>}
