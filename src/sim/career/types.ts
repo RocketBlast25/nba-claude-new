@@ -59,4 +59,6 @@ export interface CareerState {
   rosters: Record<TeamId, Player['id'][]>;
   careers: PlayerCareer[];
   events: OffCourtEvent[];
+  /** Ordered rotation per team (Milestone 7, Phase C). Absent on older saves. */
+  rotations?: Record<TeamId, Player['id'][]>;
 }

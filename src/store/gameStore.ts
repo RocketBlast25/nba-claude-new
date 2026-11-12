@@ -6,6 +6,10 @@
 import { create } from 'zustand';
 import type { CareerState, KeyMoment, KeyMomentResult } from '../sim/career/types';
 import { resolveMoment, selectMoments } from '../sim/career/keyMoments';
+import type { Player } from '../sim/core/models';
+import { checkRotation } from '../sim/league/rotation';
+import { checkTrade } from '../sim/league/trade';
+import { evaluateOffer } from '../sim/league/freeAgentOffer';
 import type { ActionId } from '../possession/decision';
 import { advanceCareerOffseason, runOffseasonEconomyWithOrder } from '../sim/career/careerLoop';
 import { simulateSeason, type GameBoxScoreRecord, type SeasonResult } from '../sim/league/season';
@@ -58,6 +62,16 @@ export interface GameStoreActions {
   resolveNextMoment: (actionId: ActionId) => KeyMomentResult | null;
   /** Runs the offseason: retirements, contracts, draft, free agency and roster top-up. */
   runOffseason: () => void;
+  /** Sets the user team's rotation after validating it against the roster. */
+  setUserRotation: (playerIds: Player['id'][]) => { ok: true } | { ok: false; reason: string };
+  /** Trades players between the user team and another team after the salary-matching check. */
+  tradeWithTeam: (args: {
+    otherTeamId: TeamId;
+    sendUser: Player['id'][];
+    sendOther: Player['id'][];
+  }) => { ok: true } | { ok: false; reason: string };
+  /** Offers a free agent a contract for the user team. Signs on success. */
+  offerFreeAgent: (playerId: Player['id']) => { ok: true } | { ok: false; reason: string };
   /** Moves the phase forward (for example, from draft to offseason). */
   setPhase: (phase: CareerPhase) => void;
   /** Clears the store back to its empty state. */
@@ -117,7 +131,9 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       },
       rng.fork(),
     );
-    set({ season, playoffs, phase: 'playoffs' });
+    const userGame = season.gameBoxScores.find((g) => g.gameId && userPlaysIn(career, g));
+    const moments = userGame ? drawUserMoments(career, userGame.gameId, seed + career.season + 7) : [];
+    set({ season, playoffs, phase: 'playoffs', pendingMoments: [...get().pendingMoments, ...moments] });
   },
 
   queueMoments: (moments) =>
@@ -134,6 +150,73 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       resolvedMoments: [...s.resolvedMoments, result],
     }));
     return result;
+  },
+
+  setUserRotation: (playerIds) => {
+    const { career } = get();
+    if (!career) return { ok: false, reason: 'No career started' };
+    const roster = career.rosters[career.userTeamId] ?? [];
+    const check = checkRotation(playerIds, roster);
+    if (!check.ok) return check;
+    set({ career: { ...career, rotations: { ...(career.rotations ?? {}), [career.userTeamId]: playerIds } } });
+    return { ok: true };
+  },
+
+  tradeWithTeam: ({ otherTeamId, sendUser, sendOther }) => {
+    const { career } = get();
+    if (!career) return { ok: false, reason: 'No career started' };
+    const userId = career.userTeamId;
+    const userRoster = career.rosters[userId] ?? [];
+    const otherRoster = career.rosters[otherTeamId] ?? [];
+    const byId = new Map(career.players.map((p) => [p.id, p]));
+    const pick = (ids: Player['id'][], roster: Player['id'][]): Player[] | null => {
+      if (ids.some((id) => !roster.includes(id))) return null;
+      const found = ids.map((id) => byId.get(id)).filter((p): p is Player => p !== undefined);
+      return found.length === ids.length ? found : null;
+    };
+    const outUser = pick(sendUser, userRoster);
+    const outOther = pick(sendOther, otherRoster);
+    if (!outUser || !outOther) return { ok: false, reason: 'Trade includes players not on the roster' };
+    const check = checkTrade({
+      sendA: outUser,
+      sendB: outOther,
+      rosterA: userRoster.length,
+      rosterB: otherRoster.length,
+    });
+    if (!check.ok) return check;
+    const swapIds = (roster: Player['id'][], out: Player['id'][], inc: Player['id'][]) => [
+      ...roster.filter((id) => !out.includes(id)),
+      ...inc,
+    ];
+    const rosters = {
+      ...career.rosters,
+      [userId]: swapIds(userRoster, sendUser, sendOther),
+      [otherTeamId]: swapIds(otherRoster, sendOther, sendUser),
+    };
+    set({ career: { ...career, rosters } });
+    return { ok: true };
+  },
+
+  offerFreeAgent: (playerId) => {
+    const { career } = get();
+    if (!career) return { ok: false, reason: 'No career started' };
+    const player = career.players.find((p) => p.id === playerId);
+    if (!player) return { ok: false, reason: 'Unknown player' };
+    const userId = career.userTeamId;
+    const roster = (career.rosters[userId] ?? [])
+      .map((id) => career.players.find((p) => p.id === id))
+      .filter((p): p is Player => p !== undefined);
+    const offer = evaluateOffer({ player, roster });
+    if (!offer.ok) return offer;
+    const signed: Player = { ...player, contract: offer.contract };
+    set({
+      career: {
+        ...career,
+        players: career.players.map((p) => (p.id === playerId ? signed : p)),
+        rosters: { ...career.rosters, [userId]: [...(career.rosters[userId] ?? []), playerId] },
+      },
+    });
+    return { ok: true };
   },
 
   runOffseason: () => {
@@ -238,6 +321,12 @@ export function selectBoxScore(
   gameId: string,
 ): GameBoxScoreRecord | undefined {
   return season?.gameBoxScores.find((g) => g.gameId === gameId);
+}
+
+/** True when the user's team takes part in this game's box score. */
+function userPlaysIn(career: CareerState, game: GameBoxScoreRecord): boolean {
+  const roster = new Set(career.rosters[career.userTeamId] ?? []);
+  return game.lines.some((line) => roster.has(line.playerId));
 }
 
 export function drawUserMoments(career: CareerState, gameId: string, rngSeed: number): KeyMoment[] {

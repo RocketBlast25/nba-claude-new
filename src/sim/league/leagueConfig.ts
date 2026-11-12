@@ -38,6 +38,13 @@ export const LEAGUE_CONFIG = {
   maxRosterSize: 15,
   /** Contract length bounds for re-signings and free-agent deals. */
   contractYears: { min: 1, max: 5 },
+  /**
+   * Salary matching for trades. A team over the cap may take back at most
+   * `incomingRatio` of the salary it sends out, plus a flat `buffer` in thousands.
+   */
+  trade: { incomingRatio: 1.25, buffer: 100 },
+  /** Number of players in the starting lineup and the rotation size limit. */
+  rotation: { starters: 5, maxPlayed: 10 },
 } as const;
 
 export type LeagueConfig = typeof LEAGUE_CONFIG;

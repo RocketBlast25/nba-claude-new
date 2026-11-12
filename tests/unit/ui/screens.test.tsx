@@ -86,6 +86,20 @@ describe('career UI screens', () => {
     expect(screen.getAllByText(/%/).length).toBeGreaterThan(0);
   });
 
+  it('renders the court replay for a user Key Moment after the season is played', () => {
+    const league = buildLeague(42);
+    const career = careerFrom(league);
+    const store = useGameStore.getState();
+    store.startCareer({ career, userTeamId: career.userTeamId, seed: 42, leagueTeams: league });
+    store.playSeason(league);
+    const pending = useGameStore.getState().pendingMoments;
+    expect(pending.length).toBeGreaterThan(0);
+    expect(pending[0]!.replay?.length).toBe(8);
+    render(createElement(KeyMomentCards));
+    expect(screen.getByRole('img', { name: /court replay/i })).toBeTruthy();
+    expect(screen.getByRole('group', { name: /choose an action/i })).toBeTruthy();
+  });
+
   it('keeps decisionCards chances in range for generated attributes', () => {
     const chances = decisionCards(generateAttributes(new SeededRng(5), 60));
     for (const id of ACTION_IDS) {
