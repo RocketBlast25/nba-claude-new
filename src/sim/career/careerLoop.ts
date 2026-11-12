@@ -6,7 +6,7 @@ import { retirementReason, type RetirementReason } from './retirement';
 import { generateProspectClass } from '../league/prospects';
 import { LEAGUE_CONFIG } from '../league/leagueConfig';
 import { advanceTeamOffseason, signFreeAgents } from '../league/offseason';
-import { buildDraftOrder } from '../league/draft';
+import { buildDraftOrder, type DraftPick } from '../league/draft';
 import { payrollOf, rookieSalary } from '../league/economy';
 import type { StandingRow } from '../league/standings';
 import type { TeamId } from '../core/types';
@@ -122,6 +122,17 @@ export function runOffseasonEconomy(
   playoffExitOrder: TeamId[],
   rng: SeededRng,
 ): CareerState {
+  return runOffseasonEconomyWithOrder(state, standings, playoffTeams, playoffExitOrder, rng).state;
+}
+
+/** Same as runOffseasonEconomy, and also returns the draft order that was used. */
+export function runOffseasonEconomyWithOrder(
+  state: CareerState,
+  standings: StandingRow[],
+  playoffTeams: TeamId[],
+  playoffExitOrder: TeamId[],
+  rng: SeededRng,
+): { state: CareerState; draftOrder: DraftPick[] } {
   const byId = new Map(state.players.map((p) => [p.id, p]));
   const moodById = new Map(state.careers.map((c) => [c.playerId, c.mood]));
   const rosters: CareerState['rosters'] = {};
@@ -169,6 +180,6 @@ export function runOffseasonEconomy(
 
   // 4. Walk-on top-up for teams still under the floor.
   const withWalkOns = replenishRosters({ ...state, players: [...byId.values()], rosters }, rng);
-  return { ...withWalkOns, season: state.season };
+  return { state: { ...withWalkOns, season: state.season }, draftOrder: order };
 }
 
