@@ -15,6 +15,8 @@ import { SeededRng } from '../sim/core/random';
 import { makeId, type GameId, type TeamId } from '../sim/core/types';
 import { simulateGame, type SimTeam } from '../sim/background/gameSim';
 import type { ScheduleTeam } from '../sim/league/schedule';
+import { buildSave, parseSave, serializeSave, type CareerPayload } from '../persistence/snapshot';
+import { readSlot, writeSlot, type SlotId, type SlotStorage, type SlotWriteResult } from '../persistence/slots';
 
 export type CareerPhase = 'regular_season' | 'playoffs' | 'draft' | 'offseason';
 
@@ -60,6 +62,14 @@ export interface GameStoreActions {
   setPhase: (phase: CareerPhase) => void;
   /** Clears the store back to its empty state. */
   reset: () => void;
+  /** Saves the current career to a manual slot or autosave. */
+  saveToSlot: (slot: SlotId) => SlotWriteResult;
+  /** Loads a slot into the store. Returns false when the slot is empty or invalid. */
+  loadFromSlot: (slot: SlotId) => boolean;
+  /** Serializes the current career to a JSON string for export. */
+  exportSave: () => string | null;
+  /** Imports a JSON save. Invalid input leaves the store unchanged. */
+  importSave: (text: string) => { ok: true } | { ok: false; error: string };
 }
 
 export type GameStore = GameStoreState & GameStoreActions;
@@ -152,7 +162,74 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   setPhase: (phase) => set({ phase }),
 
   reset: () => set({ ...initialState }),
+
+  saveToSlot: (slot) => {
+    const save = buildSave(payloadOf(get()));
+    return writeSlot(localSlotStorage(), slot, save);
+  },
+
+  loadFromSlot: (slot) => {
+    const save = readSlot(localSlotStorage(), slot);
+    if (!save) return false;
+    applyPayload(set, save.payload);
+    return true;
+  },
+
+  exportSave: () => {
+    const { career } = get();
+    if (!career) return null;
+    return serializeSave(buildSave(payloadOf(get())));
+  },
+
+  importSave: (text) => {
+    const parsed = parseSave(text);
+    if (!parsed.ok) return parsed;
+    applyPayload(set, parsed.save.payload);
+    return { ok: true };
+  },
 }));
+
+/**
+ * Autosave: every phase transition writes the autosave slot. Subscribing to the store
+ * covers playSeason, runOffseason and setPhase without touching each action.
+ */
+useGameStore.subscribe((state, prev) => {
+  if (state.phase === prev.phase || !state.career) return;
+  writeSlot(localSlotStorage(), 'autosave', buildSave(payloadOf(state)));
+});
+
+function payloadOf(s: GameStoreState): CareerPayload {
+  return {
+    career: s.career,
+    phase: s.phase,
+    userTeamId: s.userTeamId,
+    seed: s.seed,
+    season: s.season,
+    playoffs: s.playoffs,
+    draftOrder: s.draftOrder,
+    leagueTeams: s.leagueTeams,
+    pendingMoments: s.pendingMoments,
+    resolvedMoments: s.resolvedMoments,
+  };
+}
+
+function applyPayload(
+  set: (partial: Partial<GameStoreState>) => void,
+  p: CareerPayload,
+): void {
+  set({ ...initialState, ...p });
+}
+
+/** Browser localStorage when present; an in-memory fallback keeps Node tests working. */
+function localSlotStorage(): SlotStorage {
+  if (typeof localStorage !== 'undefined') return localStorage;
+  const mem = new Map<string, string>();
+  return {
+    getItem: (k) => mem.get(k) ?? null,
+    setItem: (k, v) => void mem.set(k, v),
+    removeItem: (k) => void mem.delete(k),
+  };
+}
 
 /** Draws the user's Key Moments for one game and queues them. Pure helper. */
 export function drawUserMoments(career: CareerState, gameId: string, rngSeed: number): KeyMoment[] {
