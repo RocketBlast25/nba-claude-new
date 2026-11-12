@@ -1,13 +1,25 @@
-import { STEP_MS, type CourtEntity, type PossessionState } from './types';
+import {
+  STEP_MS,
+  type CourtEntity,
+  type DecisionActor,
+  type PossessionState,
+} from './types';
 
-/** Creates a possession at time zero with the given entities. */
-export function createPossession(entities: CourtEntity[]): PossessionState {
+/**
+ * Creates a possession at time zero with the given entities. The optional actor
+ * (attributes and seeded RNG) is stored on the state for decide() to use.
+ */
+export function createPossession(
+  entities: CourtEntity[],
+  actor: DecisionActor | null = null,
+): PossessionState {
   return {
     timeMs: 0,
     tick: 0,
     accumulatorMs: 0,
     paused: false,
     entities: entities.map((e) => ({ ...e })),
+    actor,
   };
 }
 

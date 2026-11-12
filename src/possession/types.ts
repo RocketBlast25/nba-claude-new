@@ -1,3 +1,5 @@
+import type { Attributes } from '../sim/core/models';
+import type { SeededRng } from '../sim/core/random';
 import type { PlayerId, TeamId } from '../sim/core/types';
 
 /** Court logical size in units. Matches the GDD's 940x500 half-court ratio (1.88:1). */
@@ -17,6 +19,12 @@ export interface CourtEntity {
   vy: number;
 }
 
+/** The player whose attributes drive decision checks, plus the seeded RNG for those checks. */
+export interface DecisionActor {
+  attributes: Attributes;
+  rng: SeededRng;
+}
+
 export interface PossessionState {
   /** Simulation time in milliseconds, advanced only by fixed steps. */
   timeMs: number;
@@ -27,4 +35,6 @@ export interface PossessionState {
   /** True while a decision card is open. The clock does not advance. */
   paused: boolean;
   entities: CourtEntity[];
+  /** Set at creation. decide() reads attributes and rolls from this RNG. Null until set. */
+  actor: DecisionActor | null;
 }
