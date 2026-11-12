@@ -78,10 +78,10 @@ export interface PlayoffResult {
   runnerUp: TeamId;
   rounds: SeriesResult[][];
   /**
-   * Every playoff team ordered by how early it was eliminated: play-in losers first,
-   * then round 1, round 2, conference finals, Finals runner-up, champion last.
-   * Teams eliminated in the same round are ordered by regular-season record
-   * (worse record picks earlier), then team id.
+   * The 16 bracket teams ordered by how early they were eliminated: round 1, round 2,
+   * conference finals, Finals runner-up, champion last. Play-in losers are excluded;
+   * they are non-playoff teams for the draft. Teams eliminated in the same round are
+   * ordered by regular-season record (worse record picks earlier), then team id.
    */
   exitOrder: TeamId[];
 }
