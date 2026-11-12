@@ -71,6 +71,37 @@ describe('box score integrity (TR-background-sim-005)', () => {
     }
     expect(result.home.points).not.toBe(result.away.points);
   });
+
+  it('sums every new counting stat from players to team totals as integers', () => {
+    const [a, b] = makeLeague(2, 17);
+    const result = simulateGame(makeId<'game'>('g2'), a!.sim, b!.sim, new SeededRng(5));
+    for (const side of [result.home, result.away]) {
+      for (const k of ['threePm', 'threePa', 'ftm', 'fta', 'rebounds', 'steals', 'blocks', 'turnovers', 'fouls'] as const) {
+        const sum = side.boxScores.reduce((s, bs) => s + bs[k], 0);
+        expect(Number.isInteger(sum)).toBe(true);
+        for (const bs of side.boxScores) expect(Number.isInteger(bs[k])).toBe(true);
+      }
+      const threePm = side.boxScores.reduce((s, bs) => s + bs.threePm, 0);
+      const threePa = side.boxScores.reduce((s, bs) => s + bs.threePa, 0);
+      const fgm = side.boxScores.reduce((s, bs) => s + bs.fgm, 0);
+      expect(threePm).toBeLessThanOrEqual(fgm);
+      expect(threePm).toBeLessThanOrEqual(threePa);
+    }
+  });
+});
+
+describe('season aggregation (Milestone 5, Item 4)', () => {
+  it('gives each player per-game averages equal to totals divided by games played', () => {
+    const season = simulateSeason(makeLeague(30, 33), new SeededRng(77));
+    expect(season.playerSeasons.length).toBeGreaterThan(0);
+    for (const line of season.playerSeasons) {
+      expect(line.gamesPlayed).toBeGreaterThan(0);
+      expect(line.gamesPlayed).toBeLessThanOrEqual(season.gamesPlayed * 2);
+      expect(line.averages.points).toBeCloseTo(line.totals.points / line.gamesPlayed, 9);
+      expect(line.averages.rebounds).toBeCloseTo(line.totals.rebounds / line.gamesPlayed, 9);
+      expect(Number.isInteger(line.totals.threePm)).toBe(true);
+    }
+  });
 });
 
 describe('schedule (82 games per team)', () => {
@@ -129,6 +160,35 @@ describe('seasons: determinism and league averages (TR-background-sim-007)', () 
       expect(ppg).toBeLessThanOrEqual(maxPts);
       expect(fg).toBeGreaterThanOrEqual(minFg);
       expect(fg).toBeLessThanOrEqual(maxFg);
+    }
+  });
+
+  it('keeps rebounds, steals, blocks, turnovers and 3PT/FT percentages within sanity bounds over several seasons', () => {
+    const [minReb, maxReb] = SIM_CONFIG.bounds.reboundsPerTeamGame;
+    const [minStl, maxStl] = SIM_CONFIG.bounds.stealsPerTeamGame;
+    const [minBlk, maxBlk] = SIM_CONFIG.bounds.blocksPerTeamGame;
+    const [minTov, maxTov] = SIM_CONFIG.bounds.turnoversPerTeamGame;
+    const [min3p, max3p] = SIM_CONFIG.bounds.threePct;
+    const [minFt, maxFt] = SIM_CONFIG.bounds.ftPct;
+    for (let s = 1; s <= 3; s++) {
+      const season = simulateSeason(makeLeague(30, s), new SeededRng(s * 1000));
+      const teamGames = season.gamesPlayed * 2;
+      const perTeam = (k: 'rebounds' | 'steals' | 'blocks' | 'turnovers') =>
+        season.playerSeasons.reduce((sum, p) => sum + p.totals[k], 0) / teamGames;
+      const threePct = season.playerSeasons.reduce((s2, p) => s2 + p.totals.threePm, 0) / season.playerSeasons.reduce((s2, p) => s2 + p.totals.threePa, 0);
+      const ftPct = season.playerSeasons.reduce((s2, p) => s2 + p.totals.ftm, 0) / season.playerSeasons.reduce((s2, p) => s2 + p.totals.fta, 0);
+      expect(perTeam('rebounds')).toBeGreaterThanOrEqual(minReb);
+      expect(perTeam('rebounds')).toBeLessThanOrEqual(maxReb);
+      expect(perTeam('steals')).toBeGreaterThanOrEqual(minStl);
+      expect(perTeam('steals')).toBeLessThanOrEqual(maxStl);
+      expect(perTeam('blocks')).toBeGreaterThanOrEqual(minBlk);
+      expect(perTeam('blocks')).toBeLessThanOrEqual(maxBlk);
+      expect(perTeam('turnovers')).toBeGreaterThanOrEqual(minTov);
+      expect(perTeam('turnovers')).toBeLessThanOrEqual(maxTov);
+      expect(threePct).toBeGreaterThanOrEqual(min3p);
+      expect(threePct).toBeLessThanOrEqual(max3p);
+      expect(ftPct).toBeGreaterThanOrEqual(minFt);
+      expect(ftPct).toBeLessThanOrEqual(maxFt);
     }
   });
 });

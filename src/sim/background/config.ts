@@ -17,6 +17,18 @@ export const SIM_CONFIG = {
   /** Fouls at which a player's minutes are reduced (foul trouble). */
   foulTroubleFouls: 4,
   foulTroubleMinutesFactor: 0.7,
+  /** Per-possession foul chance for a defender, before the defense adjustment. */
+  baseFoulRate: 0.03,
+  /** Baseline make chance on a three-point attempt before the 3PT rating adjustment. */
+  baseThreePct: 0.36,
+  /** Baseline free-throw make chance before the free-throw rating adjustment. */
+  baseFtPct: 0.77,
+  /** Chance a missed shot is blocked by a defender. */
+  blockBaseRate: 0.1,
+  /** Baseline turnover chance on a no-shot possession, before ball-handling adjustment. */
+  baseTurnoverRate: 0.14,
+  /** Baseline steal chance on a turnover before defense and speed adjustment. */
+  baseStealRate: 1.0,
   /** Share of possessions that end in a shot (the rest are turnovers). */
   shotPossessionRate: 0.96,
   /** Baseline make chance per shot before the finishing adjustment. */
@@ -31,6 +43,12 @@ export const SIM_CONFIG = {
   bounds: {
     pointsPerTeamGame: [100, 125] as const,
     fgPct: [0.42, 0.5] as const,
+    reboundsPerTeamGame: [35, 55] as const,
+    stealsPerTeamGame: [5, 11] as const,
+    blocksPerTeamGame: [3, 8] as const,
+    turnoversPerTeamGame: [10, 20] as const,
+    threePct: [0.3, 0.42] as const,
+    ftPct: [0.7, 0.85] as const,
   },
 } as const;
 

@@ -65,6 +65,7 @@ export interface GameBoxScore {
   steals: number;
   blocks: number;
   turnovers: number;
+  fouls: number;
   fgm: number;
   fga: number;
   threePm: number;

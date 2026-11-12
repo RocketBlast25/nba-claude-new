@@ -4,6 +4,8 @@ import { buildSchedule, type ScheduleTeam } from './schedule';
 import { simulateGame, type SimTeam } from '../background/gameSim';
 import type { SeededRng } from '../core/random';
 import { makeId, type GameId } from '../core/types';
+import type { GameBoxScore } from '../core/models';
+import { aggregatePlayerSeasons, type PlayerSeasonLine } from './playerSeason';
 
 export interface SeasonResult {
   gamesPlayed: number;
@@ -12,6 +14,8 @@ export interface SeasonResult {
   totalPoints: number;
   totalFgm: number;
   totalFga: number;
+  /** Per-player season totals and per-game averages (Milestone 5, Item 4). */
+  playerSeasons: PlayerSeasonLine[];
 }
 
 /**
@@ -30,6 +34,7 @@ export function simulateSeason(
   let totalPoints = 0;
   let totalFgm = 0;
   let totalFga = 0;
+  const boxScores: GameBoxScore[] = [];
 
   schedule.forEach((g, idx) => {
     const home = byId.get(g.homeId);
@@ -40,8 +45,10 @@ export function simulateSeason(
     totalPoints += result.home.points + result.away.points;
     totalFgm += result.home.fgm + result.away.fgm;
     totalFga += result.home.fga + result.away.fga;
+    boxScores.push(...result.home.boxScores, ...result.away.boxScores);
   });
 
   const standings = sortStandings(computeStandings(teams, outcomes), outcomes);
-  return { gamesPlayed: outcomes.length, standings, outcomes, totalPoints, totalFgm, totalFga };
+  const playerSeasons = aggregatePlayerSeasons(boxScores);
+  return { gamesPlayed: outcomes.length, standings, outcomes, totalPoints, totalFgm, totalFga, playerSeasons };
 }
