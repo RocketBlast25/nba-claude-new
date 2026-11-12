@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, beforeEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { afterEach } from 'vitest';
 import { createElement } from 'react';
 import { ACTION_RULES, ACTION_IDS, decisionCards } from '../../../src/possession/decision';
@@ -13,6 +13,7 @@ import { PlayoffBracket } from '../../../src/ui/PlayoffBracket';
 import { DraftRoom } from '../../../src/ui/DraftRoom';
 import { OffseasonHub } from '../../../src/ui/OffseasonHub';
 import { App } from '../../../src/ui/App';
+import { SavesPanel } from '../../../src/ui/SavesPanel';
 import { buildLeague, careerFrom } from '../store/leagueFixture';
 
 /** Runs the real flow: start -> play season -> queue Key Moments -> resolve -> offseason. */
@@ -94,10 +95,52 @@ describe('career UI screens', () => {
     store.playSeason(league);
     const pending = useGameStore.getState().pendingMoments;
     expect(pending.length).toBeGreaterThan(0);
+    expect(pending.length).toBeLessThanOrEqual(3);
     expect(pending[0]!.replay?.length).toBe(8);
     render(createElement(KeyMomentCards));
     expect(screen.getByRole('img', { name: /court replay/i })).toBeTruthy();
     expect(screen.getByRole('group', { name: /choose an action/i })).toBeTruthy();
+  });
+
+  it('switches tabs on click and keyboard, and shows only the active panel', () => {
+    render(createElement(App));
+    const tablist = screen.getByRole('tablist', { name: 'Career sections' });
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      'Dashboard',
+      'GM Desk',
+      'Playoffs',
+      'Draft Room',
+      'Offseason',
+      'Saves',
+    ]);
+    expect(tablist).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Dashboard' }).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Saves' }));
+    expect(screen.getByRole('tab', { name: 'Saves' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('heading', { name: 'Saves' })).toBeTruthy();
+    expect(document.getElementById('panel-dashboard')?.hidden).toBe(true);
+    expect(document.getElementById('panel-saves')?.hidden).toBe(false);
+
+    const saves = screen.getByRole('tab', { name: 'Saves' });
+    fireEvent.keyDown(saves, { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Dashboard' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Dashboard' }), { key: 'End' });
+    expect(screen.getByRole('tab', { name: 'Saves' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Saves' }), { key: 'Home' });
+    expect(screen.getByRole('tab', { name: 'Dashboard' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('lists the three manual slots and autosave, with export and import', () => {
+    render(createElement(SavesPanel));
+    expect(screen.getByRole('heading', { name: 'Saves' })).toBeTruthy();
+    expect(screen.getByRole('rowheader', { name: 'Manual slot 1' })).toBeTruthy();
+    expect(screen.getByRole('rowheader', { name: 'Manual slot 2' })).toBeTruthy();
+    expect(screen.getByRole('rowheader', { name: 'Manual slot 3' })).toBeTruthy();
+    expect(screen.getByRole('rowheader', { name: 'Autosave' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export JSON' })).toBeTruthy();
+    expect(screen.getByLabelText(/Import JSON/)).toBeTruthy();
   });
 
   it('keeps decisionCards chances in range for generated attributes', () => {

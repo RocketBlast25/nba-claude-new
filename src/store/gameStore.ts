@@ -131,8 +131,10 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       },
       rng.fork(),
     );
-    const userGame = season.gameBoxScores.find((g) => g.gameId && userPlaysIn(career, g));
-    const moments = userGame ? drawUserMoments(career, userGame.gameId, seed + career.season + 7) : [];
+    const userGames = season.gameBoxScores.filter((g) => userPlaysIn(career, g));
+    const moments = sampleThirds(userGames).flatMap((g, i) =>
+      drawUserMoments(career, g.gameId, seed + career.season + 7 + i).slice(0, 1),
+    );
     set({ season, playoffs, phase: 'playoffs', pendingMoments: [...get().pendingMoments, ...moments] });
   },
 
@@ -321,6 +323,16 @@ export function selectBoxScore(
   gameId: string,
 ): GameBoxScoreRecord | undefined {
   return season?.gameBoxScores.find((g) => g.gameId === gameId);
+}
+
+/**
+ * Picks one game from the early, mid and late part of the list (in order), so the
+ * user's Key Moments span the season. Returns fewer games when the list is short.
+ */
+function sampleThirds<T>(items: T[]): T[] {
+  if (items.length === 0) return [];
+  const picks = [items[0], items[Math.floor(items.length / 2)], items[items.length - 1]];
+  return [...new Set(picks)].filter((x): x is T => x !== undefined);
 }
 
 /** True when the user's team takes part in this game's box score. */
