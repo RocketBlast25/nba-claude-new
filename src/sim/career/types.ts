@@ -1,4 +1,4 @@
-import type { Attributes, Player } from '../core/models';
+import type { Attributes, Player, Team } from '../core/models';
 import type { TeamId } from '../core/types';
 
 /** Off-court event kinds. Effects are in CAREER_CONFIG.offCourt. */
@@ -61,4 +61,6 @@ export interface CareerState {
   events: OffCourtEvent[];
   /** Ordered rotation per team (Milestone 7, Phase C). Absent on older saves. */
   rotations?: Record<TeamId, Player['id'][]>;
+  /** Team metadata (market size, payroll). Absent on older saves. */
+  teams?: Team[];
 }

@@ -37,6 +37,20 @@ export const PLAYER_MODE_CONFIG = {
     unhappySeasonsToRequest: 2,
     unhappyThreshold: 35,
   },
+  negotiation: {
+    /** Offer at or above this share of the player's ask is accepted outright. */
+    acceptRatio: 1,
+    /** Offers at or above this share (but below acceptRatio) get a counter-offer. */
+    counterRatio: 0.9,
+    /** Player's counter asks for this share of the gap between offer and ask. */
+    counterStep: 0.5,
+  },
+  freeAgency: {
+    /** Weights for the user's priority score. Each factor is scaled to 0 to 1. */
+    weights: { overall: 0.5, need: 0.3, value: 0.2 },
+    /** Mood at or above which a free agent is willing to sign with the user. */
+    minMoodToSign: 40,
+  },
   keyMoments: {
     /** Clutch fourth: final margin at or below this (score differential <= 5). */
     clutchMaxDiff: 5,
