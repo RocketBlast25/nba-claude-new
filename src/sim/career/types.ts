@@ -53,6 +53,8 @@ export interface CareerState {
   season: number;
   userTeamId: TeamId;
   players: Player[];
+  /** Normalized team-to-player mapping; each player id appears on at most one roster. */
+  rosters: Record<TeamId, Player['id'][]>;
   careers: PlayerCareer[];
   events: OffCourtEvent[];
 }

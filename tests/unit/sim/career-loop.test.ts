@@ -17,7 +17,8 @@ function buildState(seed: number): CareerState {
     retired: false,
     retiredSeason: null,
   }));
-  return { season: 1, userTeamId, players, careers, events: [] };
+  const rosters = { [userTeamId]: players.map((p) => p.id) } as CareerState['rosters'];
+  return { season: 1, userTeamId, players, rosters, careers, events: [] };
 }
 
 describe('advanceCareerOffseason', () => {
