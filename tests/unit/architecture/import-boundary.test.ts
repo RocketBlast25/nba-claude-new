@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..', '..');
-const PURE_DIRS = ['src/sim', 'src/possession', 'src/persistence'];
+const PURE_DIRS = ['src/sim', 'src/sim/career', 'src/sim/season', 'src/possession', 'src/persistence'];
 
 // Imports that would pull UI or browser code into the pure core (ADR-001).
 const FORBIDDEN_IMPORT = /from\s+['"](react|react-dom)(\/[^'"]*)?['"]|require\(\s*['"](react|react-dom)/;

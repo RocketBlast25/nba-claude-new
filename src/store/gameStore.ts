@@ -15,6 +15,14 @@ import { advanceCareerOffseason, runOffseasonEconomyWithOrder } from '../sim/car
 import { simulateSeason, type GameBoxScoreRecord, type SeasonResult } from '../sim/league/season';
 import { runPlayoffs, type PlayoffResult } from '../sim/league/playoffs';
 import type { DraftPick } from '../sim/league/draft';
+import {
+  advanceSeason,
+  resumeSeason,
+  startSeason,
+  type AdvanceResult,
+  type ResumableSeasonState,
+  type UserDecision,
+} from '../sim/season/resumableSeason';
 import { SeededRng } from '../sim/core/random';
 import { makeId, type GameId, type TeamId } from '../sim/core/types';
 import { simulateGame, type SimTeam } from '../sim/background/gameSim';
@@ -44,6 +52,8 @@ export interface GameStoreState {
   leagueTeams: (ScheduleTeam & { sim: SimTeam })[] | null;
   /** The 30-pick draft order for the latest offseason. */
   draftOrder: DraftPick[];
+  /** In-progress resumable regular season. Null when no run is active. */
+  seasonRun: ResumableSeasonState | null;
 }
 
 export interface GameStoreActions {
@@ -56,6 +66,12 @@ export interface GameStoreActions {
   }) => void;
   /** Runs the regular season, playoffs and draft-ready state for the current season. */
   playSeason: (teams: (ScheduleTeam & { sim: SimTeam })[]) => void;
+  /** Starts a resumable regular season that pauses on user Key Moments. */
+  startSeasonRun: (teams: (ScheduleTeam & { sim: SimTeam })[]) => AdvanceResult;
+  /** Plays games until the next Key Moment or the end of the regular season. */
+  advanceSeasonRun: () => AdvanceResult | null;
+  /** Applies the user's decision to the pending Key Moment and continues the season. */
+  resolveSeasonMoment: (decision: UserDecision) => AdvanceResult | null;
   /** Queues Key Moments drawn for the user's next game. */
   queueMoments: (moments: KeyMoment[]) => void;
   /** Resolves the front pending Key Moment with the user's chosen action. */
@@ -99,6 +115,7 @@ const initialState: GameStoreState = {
   seed: 1,
   leagueTeams: null,
   draftOrder: [],
+  seasonRun: null,
 };
 
 export const useGameStore = create<GameStore>()((set, get) => ({
@@ -136,6 +153,35 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       drawUserMoments(career, g.gameId, seed + career.season + 7 + i).slice(0, 1),
     );
     set({ season, playoffs, phase: 'playoffs', pendingMoments: [...get().pendingMoments, ...moments] });
+  },
+
+  startSeasonRun: (teams) => {
+    const { career, seed, userTeamId } = get();
+    if (!career) throw new Error('startSeasonRun: no career started');
+    if (!userTeamId) throw new Error('startSeasonRun: no user team');
+    const run = startSeason(career.season, userTeamId, teams, seed + career.season);
+    const sim = new Map(teams.map((t) => [t.id, t.sim]));
+    const result = advanceSeason(run, sim, teams);
+    set({ seasonRun: result.state });
+    return result;
+  },
+
+  advanceSeasonRun: () => {
+    const { seasonRun, leagueTeams } = get();
+    if (!seasonRun || !leagueTeams) return null;
+    const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
+    const result = advanceSeason(seasonRun, sim, leagueTeams);
+    set({ seasonRun: result.state });
+    return result;
+  },
+
+  resolveSeasonMoment: (decision) => {
+    const { seasonRun, leagueTeams } = get();
+    if (!seasonRun || !leagueTeams) return null;
+    const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
+    const result = resumeSeason(seasonRun, decision, sim, leagueTeams);
+    set({ seasonRun: result.state });
+    return result;
   },
 
   queueMoments: (moments) =>
