@@ -38,9 +38,121 @@
 #   line in any other shape is reported as unsupported layout, with its number.
 
 version: 1
-last_updated: ""
+last_updated: "2026-11-12"
 
-requirements: []
+requirements:
+  - id: TR-layout-001
+    system: layout
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "One responsive UI for mobile and desktop; components do not branch on device type"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-layout-002
+    system: layout
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Court canvas scales to container width at a fixed logical resolution, backing store multiplied by devicePixelRatio, redrawn on resize, aspect ratio preserved"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-layout-003
+    system: layout
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Minimum supported width 375px with no horizontal scrolling; text and HUD use relative units"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-layout-004
+    system: layout
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Every button and tactical decision card has min-height and min-width of 44px"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-layout-005
+    system: layout
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "All interactions use click, tap or pointer events; no information is shown on hover only"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-layout-006
+    system: layout
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Keyboard hotkeys 1-4 and Space are additive on desktop and do not replace touch targets"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-background-sim-001
+    system: background-sim
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Team possessions equal pace times minutes divided by 48, adjusted for offensive and defensive ratings; each overtime period adds 5 minutes"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-background-sim-002
+    system: background-sim
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Each shot attempt is assigned to a player with probability proportional to usage rate, minutes share and shot skill weight"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-background-sim-003
+    system: background-sim
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Assists are credited to teammates, capped at the team's assisted field-goal rate"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-background-sim-004
+    system: background-sim
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Stamina below 60 and foul trouble reduce minutes and performance"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-background-sim-005
+    system: background-sim
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "All box score counts are integers and player totals sum to team totals"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-background-sim-006
+    system: background-sim
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "A full 82-game season (1,230 games) simulates in under 1 second on a mid-range laptop; target verified by benchmark, not assumed"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-background-sim-007
+    system: background-sim
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Seeded runs are deterministic, and league averages stay within configured ranges over many seasons"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-decision-ui-001
+    system: decision-ui
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Four tactical decision cards show action name, live success percentage and risk/reward line without hover"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-decision-ui-002
+    system: decision-ui
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "The clock stops during a decision pause, with no time limit"
+    created: 2026-11-12
+    revised: ""
+    status: active
+  - id: TR-decision-ui-003
+    system: decision-ui
+    gdd: design/gdd/nba-career-simulator.md
+    requirement: "Each decision card is a button with min-height 44px; hotkeys 1-4 map to the same actions"
+    created: 2026-11-12
+    revised: ""
+    status: active
 
 # --- EXAMPLE ENTRIES (remove when first real entries are added) ---
 #
