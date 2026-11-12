@@ -2,7 +2,7 @@
  * Pure selectors for the MyCareer dashboard. Derivation lives here so the React
  * components only render what these return (ADR-001). No React or DOM imports.
  */
-import type { Attributes, Badge, Player } from '../sim/core/models';
+import type { Attributes, Badge, Player, Team } from '../sim/core/models';
 import type { PlayerId, TeamId } from '../sim/core/types';
 import type { PlayerRole, PlayerCareerMode, Trophy, TrophyKind } from '../sim/career/playerMode';
 import type { SeasonObjective } from '../sim/career/keyMomentTriggers';
@@ -261,6 +261,12 @@ export function selectHeader(player: Player, mode: PlayerCareerMode | null, role
     happiness: mode?.happiness ?? null,
     ambition: mode?.ambition ?? null,
   };
+}
+
+/** Trade destinations with display names; falls back to the raw ID when team data is absent. */
+export function selectTradeTargets(teamIds: TeamId[], teams: Team[] | undefined): { id: TeamId; name: string }[] {
+  const byId = new Map((teams ?? []).map((t) => [t.id, t.name]));
+  return teamIds.map((id) => ({ id, name: byId.get(id) ?? id }));
 }
 
 export const ROLE_LABELS: Record<PlayerRole, string> = {

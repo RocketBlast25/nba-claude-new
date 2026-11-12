@@ -14,6 +14,18 @@ export class SeededRng {
     this.state = seed >>> 0;
   }
 
+  /** Returns the raw internal state, so a stream can be saved and restored exactly. */
+  getState(): number {
+    return this.state;
+  }
+
+  /** Recreates a generator from a value returned by getState(). */
+  static fromState(state: number): SeededRng {
+    const rng = new SeededRng(0);
+    rng.state = state >>> 0;
+    return rng;
+  }
+
   /** Returns the next float in the half-open interval [0, 1). */
   next(): number {
     this.state = (this.state + 0x6d2b79f5) >>> 0;

@@ -1,5 +1,8 @@
 import type { Attributes, Player, Team } from '../core/models';
 import type { TeamId } from '../core/types';
+import type { PlayerCareerMode } from './playerMode';
+import type { SeasonObjective } from './keyMomentTriggers';
+import type { PlayerOffer } from './freeAgency';
 
 /** Off-court event kinds. Effects are in CAREER_CONFIG.offCourt. */
 export type OffCourtKind = 'media' | 'injury_rumor' | 'community' | 'contract_talk' | 'teammate_conflict';
@@ -63,4 +66,17 @@ export interface CareerState {
   rotations?: Record<TeamId, Player['id'][]>;
   /** Team metadata (market size, payroll). Absent on older saves. */
   teams?: Team[];
+  /** User-controlled player's mode state. Absent on Phase 1 to 4 saves. */
+  playerMode?: PlayerModeState;
+}
+
+/** Serializable player-mode slice of CareerState (Milestone 8, Phase 5). */
+export interface PlayerModeState extends PlayerCareerMode {
+  /** Previous season's attributes for year-over-year deltas. */
+  previousAttributes?: Attributes;
+  lifetimeEarnings: number;
+  activeObjectives: SeasonObjective[];
+  /** Offers awaiting the user's signing decision in the offseason. */
+  pendingOffers: PlayerOffer[];
+  unhappySeasons: number;
 }

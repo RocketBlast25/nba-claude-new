@@ -21,6 +21,7 @@ import {
   selectHeader,
   selectObjectiveStatuses,
   selectSuperstarStandings,
+  selectTradeTargets,
   selectTrophyGroups,
 } from './mycareerSelectors';
 
@@ -211,7 +212,7 @@ export function MyCareerDashboard({
       <section aria-label="Trade request">
         <h3>Trade request</h3>
         {tradeTargets.length > 0 ? (
-          <p>Eligible destinations: {tradeTargets.join(', ')}</p>
+          <p>Eligible destinations: {selectTradeTargets(tradeTargets, career.teams).map((t) => t.name).join(', ')}</p>
         ) : (
           <p>Trade request not available yet.</p>
         )}

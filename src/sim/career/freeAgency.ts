@@ -108,6 +108,15 @@ export function rankFreeAgents(
 }
 
 /** Team facts used for offers. Read from state.teams when present, otherwise derived from rosters. */
+/**
+ * True when the offer's salary fits under the team's cap. Checked only when team
+ * metadata is present; without it the offer always fits, as before.
+ */
+export function offerFitsCap(state: CareerState, offer: PlayerOffer): boolean {
+  if (!state.teams) return true;
+  return offer.salary <= capSpace(teamFacts(state, offer.teamId).payroll);
+}
+
 function teamFacts(state: CareerState, teamId: TeamId): { payroll: number; overall: number; marketSize: number; rosterSize: number } {
   const ids = state.rosters[teamId] ?? [];
   const byId = new Map(state.players.map((p) => [p.id, p]));
@@ -206,6 +215,8 @@ export function resolvePlayerSigning(
     );
     return { ...state, careers: next };
   }
+  // Cap space is checked only when team metadata is present, as offers are.
+  if (!offerFitsCap(state, selectedOffer)) return state;
   const rosters: CareerState['rosters'] = { ...state.rosters };
   for (const teamId of Object.keys(rosters) as TeamId[]) {
     rosters[teamId] = (rosters[teamId] ?? []).filter((id) => id !== playerId);

@@ -55,7 +55,9 @@ export function advanceCareerOffseason(state: CareerState, rng: SeededRng): Offs
     careers.push({ ...career, mood, chemistry, yearsPro: career.yearsPro + 1 });
   }
 
+  // Spread state so optional fields (playerMode, teams) carry across the offseason.
   const nextState: CareerState = {
+    ...state,
     season: state.season + 1,
     userTeamId: state.userTeamId,
     players,

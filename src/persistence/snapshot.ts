@@ -10,6 +10,7 @@ import type { PlayoffResult } from '../sim/league/playoffs';
 import type { SeasonResult } from '../sim/league/season';
 import type { ScheduleTeam } from '../sim/league/schedule';
 import type { SimTeam } from '../sim/background/gameSim';
+import type { PlayoffsRunState, ResumableSeasonState } from '../sim/season/resumableSeason';
 
 export const SAVE_VERSION = 1;
 
@@ -28,6 +29,10 @@ export interface CareerPayload {
   leagueTeams: (ScheduleTeam & { sim: SimTeam })[] | null;
   pendingMoments: KeyMoment[];
   resolvedMoments: KeyMomentResult[];
+  /** In-progress regular season run. Absent on Phase 1 to 4 saves. */
+  seasonRun?: ResumableSeasonState | null;
+  /** In-progress playoff run. Absent on saves from before playoff runs existed. */
+  playoffsRun?: PlayoffsRunState | null;
 }
 
 export interface CareerSave {
@@ -88,6 +93,22 @@ export function parseSave(text: string): ParseResult {
   }
   if (p.leagueTeams !== null && !Array.isArray(p.leagueTeams)) {
     return { ok: false, error: 'Save has invalid league teams.' };
+  }
+  if (p.seasonRun !== undefined && p.seasonRun !== null && !isRecord(p.seasonRun)) {
+    return { ok: false, error: 'Save has an invalid season run.' };
+  }
+  if (p.playoffsRun !== undefined && p.playoffsRun !== null && !isRecord(p.playoffsRun)) {
+    return { ok: false, error: 'Save has an invalid playoffs run.' };
+  }
+  if (isRecord(p.career) && p.career.playerMode !== undefined) {
+    const m = p.career.playerMode;
+    if (!isRecord(m) || typeof m.playerId !== 'string' || typeof m.coachTrust !== 'number' ||
+      typeof m.happiness !== 'number' || typeof m.ambition !== 'number' ||
+      typeof m.lifetimeEarnings !== 'number' || !Array.isArray(m.trophies) ||
+      !Array.isArray(m.activeObjectives) || !Array.isArray(m.pendingOffers) ||
+      typeof m.unhappySeasons !== 'number') {
+      return { ok: false, error: 'Save has an invalid player mode.' };
+    }
   }
   return { ok: true, save: raw as unknown as CareerSave };
 }

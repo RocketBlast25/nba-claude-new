@@ -4,10 +4,32 @@
  * live here; the UI reads this store and never imports sim logic directly.
  */
 import { create } from 'zustand';
-import type { CareerState, KeyMoment, KeyMomentResult } from '../sim/career/types';
+import type { CareerState, KeyMoment, KeyMomentResult, PlayerModeState } from '../sim/career/types';
+import {
+  applyCoachTrustDelta,
+  createPlayerCareerMode,
+  deriveRole,
+  nextUnhappySeasons,
+  recordTrophy,
+  shouldRequestTrade,
+  updateHappiness,
+} from '../sim/career/playerMode';
+import {
+  assignSeasonObjectives,
+  evaluateSeasonObjectives,
+  totalsFromBoxScores,
+} from '../sim/career/keyMomentTriggers';
+import {
+  findTradeDestination,
+  generatePlayerOffers,
+  offerFitsCap,
+  resolvePlayerSigning,
+  type PlayerOffer,
+} from '../sim/career/freeAgency';
 import { resolveMoment, selectMoments } from '../sim/career/keyMoments';
 import type { Player } from '../sim/core/models';
 import { checkRotation } from '../sim/league/rotation';
+import { LEAGUE_CONFIG } from '../sim/league/leagueConfig';
 import { checkTrade } from '../sim/league/trade';
 import { evaluateOffer } from '../sim/league/freeAgentOffer';
 import type { ActionId } from '../possession/decision';
@@ -17,9 +39,14 @@ import { runPlayoffs, type PlayoffResult } from '../sim/league/playoffs';
 import type { DraftPick } from '../sim/league/draft';
 import {
   advanceSeason,
+  advancePlayoffsRun,
+  resumePlayoffsRun,
   resumeSeason,
+  startPlayoffsRun,
   startSeason,
   type AdvanceResult,
+  type PlayoffAdvanceResult,
+  type PlayoffsRunState,
   type ResumableSeasonState,
   type UserDecision,
 } from '../sim/season/resumableSeason';
@@ -54,6 +81,8 @@ export interface GameStoreState {
   draftOrder: DraftPick[];
   /** In-progress resumable regular season. Null when no run is active. */
   seasonRun: ResumableSeasonState | null;
+  /** In-progress resumable playoffs. Null when no playoff run is active. */
+  playoffsRun: PlayoffsRunState | null;
 }
 
 export interface GameStoreActions {
@@ -72,6 +101,12 @@ export interface GameStoreActions {
   advanceSeasonRun: () => AdvanceResult | null;
   /** Applies the user's decision to the pending Key Moment and continues the season. */
   resolveSeasonMoment: (decision: UserDecision) => AdvanceResult | null;
+  /** Starts a resumable playoff run that pauses on user playoff games. */
+  startPlayoffsRun: (teams: (ScheduleTeam & { sim: SimTeam })[]) => PlayoffAdvanceResult;
+  /** Plays playoff games until the next user game or the Finals. */
+  advancePlayoffsRun: () => PlayoffAdvanceResult | null;
+  /** Applies the user's decision to the pending playoff moment and continues. */
+  resolvePlayoffMoment: (decision: UserDecision) => PlayoffAdvanceResult | null;
   /** Queues Key Moments drawn for the user's next game. */
   queueMoments: (moments: KeyMoment[]) => void;
   /** Resolves the front pending Key Moment with the user's chosen action. */
@@ -90,6 +125,14 @@ export interface GameStoreActions {
   offerFreeAgent: (playerId: Player['id']) => { ok: true } | { ok: false; reason: string };
   /** Moves the phase forward (for example, from draft to offseason). */
   setPhase: (phase: CareerPhase) => void;
+  /** Starts a career with the given player as the controlled player, with mode state. */
+  startPlayerCareer: (playerId: Player['id']) => { ok: true } | { ok: false; reason: string };
+  /** Asks for a trade for the controlled player to a valid partner, preferring the given team. */
+  requestPlayerTrade: (preferredTeamId?: TeamId) => { ok: true; otherTeamId: TeamId } | { ok: false; reason: string };
+  /** Signs the controlled player with one of this offseason's offers. */
+  signPlayerOffer: (offer: PlayerOffer) => { ok: true } | { ok: false; reason: string };
+  /** Declines every pending offer, leaving the player unsigned for another season. */
+  declineAllOffers: () => void;
   /** Clears the store back to its empty state. */
   reset: () => void;
   /** Saves the current career to a manual slot or autosave. */
@@ -116,6 +159,7 @@ const initialState: GameStoreState = {
   leagueTeams: null,
   draftOrder: [],
   seasonRun: null,
+  playoffsRun: null,
 };
 
 export const useGameStore = create<GameStore>()((set, get) => ({
@@ -152,7 +196,15 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const moments = sampleThirds(userGames).flatMap((g, i) =>
       drawUserMoments(career, g.gameId, seed + career.season + 7 + i).slice(0, 1),
     );
-    set({ season, playoffs, phase: 'playoffs', pendingMoments: [...get().pendingMoments, ...moments] });
+    const scored = applySeasonObjectives(career, season, userGames);
+    const withObjectives = recordChampionship(scored, playoffs, career.season);
+    set({
+      season,
+      playoffs,
+      phase: 'playoffs',
+      pendingMoments: [...get().pendingMoments, ...moments],
+      career: withObjectives,
+    });
   },
 
   startSeasonRun: (teams) => {
@@ -181,6 +233,37 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
     const result = resumeSeason(seasonRun, decision, sim, leagueTeams);
     set({ seasonRun: result.state });
+    return result;
+  },
+
+  startPlayoffsRun: (teams) => {
+    const { career, seed, userTeamId, seasonRun } = get();
+    if (!career) throw new Error('startPlayoffsRun: no career started');
+    if (!userTeamId) throw new Error('startPlayoffsRun: no user team');
+    const standings = seasonRun?.standings;
+    if (!standings) throw new Error('startPlayoffsRun: regular season not finished');
+    const run = startPlayoffsRun(career.season, userTeamId, standings, seed + career.season);
+    const sim = new Map(teams.map((t) => [t.id, t.sim]));
+    const result = advancePlayoffsRun(run, playoffGameRunner(sim));
+    set({ playoffsRun: result.state });
+    return result;
+  },
+
+  advancePlayoffsRun: () => {
+    const { playoffsRun, leagueTeams } = get();
+    if (!playoffsRun || !leagueTeams) return null;
+    const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
+    const result = advancePlayoffsRun(playoffsRun, playoffGameRunner(sim));
+    set({ playoffsRun: result.state });
+    return result;
+  },
+
+  resolvePlayoffMoment: (decision) => {
+    const { playoffsRun, leagueTeams } = get();
+    if (!playoffsRun || !leagueTeams) return null;
+    const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
+    const result = resumePlayoffsRun(playoffsRun, decision, playoffGameRunner(sim));
+    set({ playoffsRun: result.state });
     return result;
   },
 
@@ -283,14 +366,101 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       playoffs.exitOrder,
       rng.fork(),
     );
+    const withOffers = withPlayerOffers(withNewObjectives(next, career.season + 1), rng.fork());
     set({
-      career: { ...next, season: career.season + 1 },
+      career: { ...withOffers, season: career.season + 1 },
       draftOrder,
       phase: 'offseason',
     });
   },
 
   setPhase: (phase) => set({ phase }),
+
+  startPlayerCareer: (playerId) => {
+    const { career } = get();
+    if (!career) return { ok: false, reason: 'No career started' };
+    const player = career.players.find((p) => p.id === playerId);
+    if (!player) return { ok: false, reason: 'Unknown player' };
+    const mode = createPlayerCareerMode(player);
+    const playerMode: PlayerModeState = {
+      ...mode,
+      lifetimeEarnings: 0,
+      activeObjectives: [],
+      pendingOffers: [],
+      unhappySeasons: 0,
+    };
+    const started = withNewObjectives({ ...career, playerMode }, career.season);
+    set({ career: started });
+    return { ok: true };
+  },
+
+  requestPlayerTrade: (preferredTeamId) => {
+    const { career } = get();
+    if (!career || !career.playerMode) return { ok: false, reason: 'No player career started' };
+    if (!shouldRequestTrade(career.playerMode.unhappySeasons)) {
+      return { ok: false, reason: 'Trade is not requested yet' };
+    }
+    const playerId = career.playerMode.playerId;
+    const partners = findTradeDestination(career, playerId, preferredTeamId ? [preferredTeamId] : []);
+    const otherTeamId = partners[0];
+    if (!otherTeamId) return { ok: false, reason: 'No team can take this trade' };
+    const player = career.players.find((x) => x.id === playerId);
+    if (!player) return { ok: false, reason: 'Unknown player' };
+    const otherRoster = career.rosters[otherTeamId] ?? [];
+    const give = otherRoster.find((id) => {
+      const p = career.players.find((x) => x.id === id);
+      return p !== undefined && checkTrade({
+        sendA: [player],
+        sendB: [p],
+        rosterA: (career.rosters[career.userTeamId] ?? []).length,
+        rosterB: otherRoster.length,
+      }).ok;
+    });
+    if (!give) return { ok: false, reason: 'No team can take this trade' };
+    const traded = get().tradeWithTeam({ otherTeamId, sendUser: [playerId], sendOther: [give] });
+    if (!traded.ok) return traded;
+    const current = get().career;
+    if (current?.playerMode) {
+      set({ career: { ...current, playerMode: { ...current.playerMode, unhappySeasons: 0 } } });
+    }
+    return { ok: true, otherTeamId };
+  },
+
+  signPlayerOffer: (offer) => {
+    const { career } = get();
+    if (!career || !career.playerMode) return { ok: false, reason: 'No player career started' };
+    const playerId = career.playerMode.playerId;
+    const pending = career.playerMode.pendingOffers;
+    if (!pending.some((o) => o.teamId === offer.teamId && o.salary === offer.salary)) {
+      return { ok: false, reason: 'Offer is not pending' };
+    }
+    if ((career.rosters[offer.teamId] ?? []).length >= LEAGUE_CONFIG.maxRosterSize) {
+      return { ok: false, reason: 'Team roster is full' };
+    }
+    if (!offerFitsCap(career, offer)) {
+      return { ok: false, reason: 'Team is over the cap for this offer' };
+    }
+    const next = resolvePlayerSigning(career, playerId, offer);
+    set({
+      career: {
+        ...next,
+        playerMode: { ...career.playerMode, pendingOffers: [] },
+      },
+    });
+    return { ok: true };
+  },
+
+  declineAllOffers: () => {
+    const { career } = get();
+    if (!career || !career.playerMode) return;
+    const declined = resolvePlayerSigning(career, career.playerMode.playerId, null);
+    set({
+      career: {
+        ...declined,
+        playerMode: { ...career.playerMode, pendingOffers: [] },
+      },
+    });
+  },
 
   reset: () => set({ ...initialState }),
 
@@ -329,6 +499,17 @@ useGameStore.subscribe((state, prev) => {
   writeSlot(localSlotStorage(), 'autosave', buildSave(payloadOf(state)));
 });
 
+/** Plays one playoff game with the series RNG, mirroring the runPlayoffs game in playSeason. */
+function playoffGameRunner(sim: Map<TeamId, SimTeam>) {
+  return (home: TeamId, away: TeamId, gameRng: SeededRng): boolean => {
+    const h = sim.get(home);
+    const a = sim.get(away);
+    if (!h || !a) throw new Error('playoffs: unknown playoff team');
+    const result = simulateGame(makeId<'game'>(`po-${home}-${away}`) as GameId, h, a, gameRng);
+    return result.home.points > result.away.points;
+  };
+}
+
 function payloadOf(s: GameStoreState): CareerPayload {
   return {
     career: s.career,
@@ -341,6 +522,8 @@ function payloadOf(s: GameStoreState): CareerPayload {
     leagueTeams: s.leagueTeams,
     pendingMoments: s.pendingMoments,
     resolvedMoments: s.resolvedMoments,
+    seasonRun: s.seasonRun,
+    playoffsRun: s.playoffsRun,
   };
 }
 
@@ -352,9 +535,13 @@ function applyPayload(
 }
 
 /** Browser localStorage when present; an in-memory fallback keeps Node tests working. */
+// Shared across calls so a save written in one call can be read back in a later one
+// when no browser localStorage exists (Node tests).
+const memorySlots = new Map<string, string>();
+
 function localSlotStorage(): SlotStorage {
   if (typeof localStorage !== 'undefined') return localStorage;
-  const mem = new Map<string, string>();
+  const mem = memorySlots;
   return {
     getItem: (k) => mem.get(k) ?? null,
     setItem: (k, v) => void mem.set(k, v),
@@ -379,6 +566,84 @@ function sampleThirds<T>(items: T[]): T[] {
   if (items.length === 0) return [];
   const picks = [items[0], items[Math.floor(items.length / 2)], items[items.length - 1]];
   return [...new Set(picks)].filter((x): x is T => x !== undefined);
+}
+
+/**
+ * Scores the controlled player's season against their objectives and applies coach
+ * trust, unhappiness and the trade streak. A career without player mode is unchanged.
+ */
+function applySeasonObjectives(
+  career: CareerState,
+  season: SeasonResult,
+  userGames: GameBoxScoreRecord[],
+): CareerState {
+  const mode = career.playerMode;
+  if (!mode) return career;
+  const lines = userGames.flatMap((g) => g.lines.filter((l) => l.playerId === mode.playerId));
+  const userStanding = season.standings.find((r) => r.teamId === career.userTeamId);
+  const wins = userStanding?.wins ?? 0;
+  const losses = userStanding?.losses ?? 0;
+  const totals = totalsFromBoxScores(lines, wins, losses);
+  const evaluation = evaluateSeasonObjectives(totals, mode.activeObjectives);
+  const trusted = applyCoachTrustDelta(mode, evaluation.coachTrustDelta);
+  const role = playerRoleOn(career, mode.playerId);
+  const teamWinPct = wins + losses === 0 ? 0.5 : wins / (wins + losses);
+  const happy = updateHappiness(trusted, { role, teamWinPct });
+  return {
+    ...career,
+    playerMode: {
+      ...mode,
+      ...happy,
+      unhappySeasons: nextUnhappySeasons(mode.unhappySeasons, happy.happiness),
+      activeObjectives: [],
+    },
+  };
+}
+
+/** Assigns the controlled player's objectives for a new season. */
+function withNewObjectives(career: CareerState, season: number): CareerState {
+  const mode = career.playerMode;
+  if (!mode) return career;
+  const player = career.players.find((p) => p.id === mode.playerId);
+  if (!player) return career;
+  const role = playerRoleOn(career, mode.playerId);
+  const objectives = assignSeasonObjectives(player.overall, role, new SeededRng(season));
+  return { ...career, playerMode: { ...mode, activeObjectives: objectives } };
+}
+
+/**
+ * Replaces the controlled player's pending offers when their contract has expired.
+ * A career without player mode, or a player still under contract, is unchanged.
+ */
+function withPlayerOffers(career: CareerState, rng: SeededRng): CareerState {
+  const mode = career.playerMode;
+  if (!mode) return career;
+  const player = career.players.find((p) => p.id === mode.playerId);
+  if (!player || player.contract.yearsLeft > 0) return career;
+  const offers = generatePlayerOffers(career, player, rng);
+  return { ...career, playerMode: { ...mode, pendingOffers: offers } };
+}
+
+/** Records a championship trophy for the controlled player when the user's team wins. */
+function recordChampionship(career: CareerState, playoffs: PlayoffResult, season: number): CareerState {
+  const mode = career.playerMode;
+  if (!mode || playoffs.champion !== career.userTeamId) return career;
+  return {
+    ...career,
+    playerMode: { ...mode, ...recordTrophy(mode, { kind: 'championship', season, teamId: career.userTeamId }) },
+  };
+}
+
+/** Role from the player's overall rank on the user's roster. */
+function playerRoleOn(career: CareerState, playerId: Player['id']): ReturnType<typeof deriveRole> {
+  const roster = (career.rosters[career.userTeamId] ?? [])
+    .map((id) => career.players.find((p) => p.id === id))
+    .filter((p): p is Player => p !== undefined)
+    .sort((a, b) => b.overall - a.overall);
+  const index = roster.findIndex((p) => p.id === playerId);
+  const player = roster[index];
+  if (!player) return 'bench';
+  return deriveRole({ rosterRank: index + 1, overall: player.overall, isStarter: index < 5 });
 }
 
 /** True when the user's team takes part in this game's box score. */

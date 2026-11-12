@@ -17,10 +17,10 @@ import { SeededRng } from '../../../src/sim/core/random';
 import type { CareerState } from '../../../src/sim/career/types';
 import { salaryForOverall } from '../../../src/sim/league/economy';
 
+/** Partial player fixture: only the fields the free-agency functions read. */
 const player = (id: string, overall: number): Player =>
   ({
     id: makeId<'player'>(id) as PlayerId,
-    teamId: makeId<'team'>('T1') as TeamId,
     overall,
     contract: { salary: 1, yearsLeft: 1, type: 'standard' },
   }) as unknown as Player;
