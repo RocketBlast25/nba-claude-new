@@ -3,6 +3,7 @@ import { sortStandings, winPct } from '../sim/league/standings';
 import { payrollOf, capSpace } from '../sim/league/economy';
 import { ROSTER_FLOOR } from '../sim/career/careerLoop';
 import { KeyMomentCards } from './KeyMomentCards';
+import { GameLog } from './GameLog';
 
 /** Season overview, the user roster summary, and conference standings. */
 export function CareerDashboard() {
@@ -45,6 +46,7 @@ export function CareerDashboard() {
           Play season
         </button>
       )}
+      <GameLog />
       <KeyMomentCards />
     </div>
   );

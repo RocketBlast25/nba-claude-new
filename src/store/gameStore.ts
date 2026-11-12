@@ -8,7 +8,7 @@ import type { CareerState, KeyMoment, KeyMomentResult } from '../sim/career/type
 import { resolveMoment, selectMoments } from '../sim/career/keyMoments';
 import type { ActionId } from '../possession/decision';
 import { advanceCareerOffseason, runOffseasonEconomyWithOrder } from '../sim/career/careerLoop';
-import { simulateSeason, type SeasonResult } from '../sim/league/season';
+import { simulateSeason, type GameBoxScoreRecord, type SeasonResult } from '../sim/league/season';
 import { runPlayoffs, type PlayoffResult } from '../sim/league/playoffs';
 import type { DraftPick } from '../sim/league/draft';
 import { SeededRng } from '../sim/core/random';
@@ -232,6 +232,14 @@ function localSlotStorage(): SlotStorage {
 }
 
 /** Draws the user's Key Moments for one game and queues them. Pure helper. */
+/** Returns one game's per-player box-score lines from the season result, or undefined. */
+export function selectBoxScore(
+  season: SeasonResult | null,
+  gameId: string,
+): GameBoxScoreRecord | undefined {
+  return season?.gameBoxScores.find((g) => g.gameId === gameId);
+}
+
 export function drawUserMoments(career: CareerState, gameId: string, rngSeed: number): KeyMoment[] {
   const actors = career.players.filter((p) => career.rosters[career.userTeamId]?.includes(p.id));
   return selectMoments(gameId, career.season, true, actors, new SeededRng(rngSeed));

@@ -3,7 +3,7 @@ import { computeStandings, sortStandings } from './standings';
 import { buildSchedule, type ScheduleTeam } from './schedule';
 import { simulateGame, type SimTeam } from '../background/gameSim';
 import type { SeededRng } from '../core/random';
-import { makeId, type GameId } from '../core/types';
+import { makeId, type GameId, type TeamId } from '../core/types';
 import type { GameBoxScore } from '../core/models';
 import { aggregatePlayerSeasons, type PlayerSeasonLine } from './playerSeason';
 
@@ -16,6 +16,16 @@ export interface SeasonResult {
   totalFga: number;
   /** Per-player season totals and per-game averages (Milestone 5, Item 4). */
   playerSeasons: PlayerSeasonLine[];
+  /** Per-game box score lines, kept so a game can be drilled into (Milestone 7, Phase B). */
+  gameBoxScores: GameBoxScoreRecord[];
+}
+
+/** One game's box score lines for both teams, keyed by gameId. */
+export interface GameBoxScoreRecord {
+  gameId: GameId;
+  homeId: TeamId;
+  awayId: TeamId;
+  lines: GameBoxScore[];
 }
 
 /**
@@ -35,6 +45,7 @@ export function simulateSeason(
   let totalFgm = 0;
   let totalFga = 0;
   const boxScores: GameBoxScore[] = [];
+  const gameBoxScores: GameBoxScoreRecord[] = [];
 
   schedule.forEach((g, idx) => {
     const home = byId.get(g.homeId);
@@ -42,6 +53,12 @@ export function simulateSeason(
     if (!home || !away) throw new Error('simulateSeason: schedule references an unknown team');
     const result = simulateGame(makeId<'game'>(`g${idx + 1}`) as GameId, home, away, gameRng);
     outcomes.push({ homeId: g.homeId, awayId: g.awayId, homeWon: result.home.points > result.away.points });
+    gameBoxScores.push({
+      gameId: result.gameId,
+      homeId: g.homeId,
+      awayId: g.awayId,
+      lines: [...result.home.boxScores, ...result.away.boxScores],
+    });
     totalPoints += result.home.points + result.away.points;
     totalFgm += result.home.fgm + result.away.fgm;
     totalFga += result.home.fga + result.away.fga;
@@ -50,5 +67,14 @@ export function simulateSeason(
 
   const standings = sortStandings(computeStandings(teams, outcomes), outcomes);
   const playerSeasons = aggregatePlayerSeasons(boxScores);
-  return { gamesPlayed: outcomes.length, standings, outcomes, totalPoints, totalFgm, totalFga, playerSeasons };
+  return {
+    gamesPlayed: outcomes.length,
+    standings,
+    outcomes,
+    totalPoints,
+    totalFgm,
+    totalFga,
+    playerSeasons,
+    gameBoxScores,
+  };
 }

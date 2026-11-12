@@ -1,5 +1,6 @@
 import { decisionCards, ACTION_RULES, ACTION_IDS, type ActionId } from '../possession/decision';
 import { useGameStore } from '../store/gameStore';
+import { CourtReplay } from './CourtReplay';
 
 /**
  * Renders the front pending Key Moment as four decision cards. Live success %
@@ -27,6 +28,7 @@ export function KeyMomentCards() {
       <h2>
         Key Moment: Q{pending.quarter} {formatClock(pending.clockSec)}
       </h2>
+      {pending.replay ? <CourtReplay key={`${pending.gameId}-${pending.quarter}-${pending.clockSec}`} frames={pending.replay} /> : null}
       <div role="group" aria-label="Choose an action" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         {ACTION_IDS.map((id: ActionId) => (
           <button key={id} type="button" onClick={() => resolveNext(id)}>
