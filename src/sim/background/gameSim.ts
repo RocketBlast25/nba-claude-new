@@ -104,7 +104,12 @@ function simulateTeam(
   }));
 
   const shotsTaken = Math.round(possessions * SIM_CONFIG.shotPossessionRate);
-  const weights = stats.map(({ player, minutes: mins }) => player.usage * mins);
+  // Short periods (e.g. overtime) can round every player's minutes to zero; fall back to
+  // usage alone so the shot distribution stays valid.
+  const weightsByMinutes = stats.map(({ player, minutes: mins }) => player.usage * mins);
+  const weights = weightsByMinutes.some((w) => w > 0)
+    ? weightsByMinutes
+    : stats.map(({ player }) => player.usage);
   let fgm = 0;
   let fga = 0;
   let points = 0;
