@@ -56,7 +56,17 @@ export function playerMinutes(player: SimPlayer, fouls: number, baseMinutes: num
 /** Splits total team minutes across players in proportion to usage (weights sum to 240 per game slot). */
 function allocateMinutes(players: SimPlayer[], totalMinutes: number): number[] {
   const usageSum = players.reduce((s, p) => s + p.usage, 0) || 1;
-  return players.map((p) => Math.round((p.usage / usageSum) * totalMinutes));
+  // Largest-remainder rounding keeps the whole-minute total exactly equal to totalMinutes.
+  const exact = players.map((p) => (p.usage / usageSum) * totalMinutes);
+  const out = exact.map((x) => Math.floor(x));
+  let left = totalMinutes - out.reduce((s, x) => s + x, 0);
+  const order = exact.map((_, i) => i).sort((a, b) => (exact[b]! - out[b]!) - (exact[a]! - out[a]!));
+  for (const i of order) {
+    if (left <= 0) break;
+    out[i]! += 1;
+    left--;
+  }
+  return out;
 }
 
 /** Simulates one team's side of a game. Shots go to players by usage (TR-background-sim-002). */
@@ -164,8 +174,31 @@ function simulateTeam(
   }
 
   // Possessions that do not end in a shot are turnovers; a defender may steal.
-  // Every possession carries a turnover chance, scaled by the ball-handler's rating.
+  // Every possession carries a non-shooting foul chance; the offense shoots two free throws.
+  // Turnovers are then rolled on the same possession, scaled by the ball-handler's rating.
   for (let t = 0; t < possessions; t++) {
+    const foulIdx = rng.weighted(
+      stats.map((_, i) => i),
+      weights,
+    );
+    const fouler = pickDefender(stats, rng, foulIdx);
+    if (fouler !== undefined && rng.chance(nonShootingFoulRate(stats[fouler]?.player))) {
+      const foulBox = boxScores[fouler];
+      if (foulBox) foulBox.fouls++;
+      const shooter = stats[foulIdx]?.player;
+      const shooterBox = boxScores[foulIdx];
+      // Only fouls past the bonus (or on a shooter) send the offense to the line.
+      if (shooter && shooterBox && rng.chance(SIM_CONFIG.nonShootingFoulFtRate)) {
+        for (let f = 0; f < 2; f++) {
+          shooterBox.fta++;
+          if (rng.chance(freeThrowChance(shooter.attributes.freeThrow))) {
+            shooterBox.ftm++;
+            shooterBox.points += 1;
+            points += 1;
+          }
+        }
+      }
+    }
     const idx = rng.weighted(
       stats.map((_, i) => i),
       weights,
@@ -191,10 +224,28 @@ function simulateTeam(
     if (box) box.assists++;
   }
 
+  // Stamina rounding can shift the team total by a minute; restore it to the game length exactly.
+  const targetMinutes = minutes;
+  const stamina = boxScores.map((b) => b.minutes);
+  const staminaTotal = stamina.reduce((s, m) => s + m, 0);
+  if (staminaTotal !== targetMinutes) {
+    let diff = targetMinutes - staminaTotal;
+    const order = stamina.map((_, i) => i).sort((a, b) => (diff > 0 ? (stamina[b] ?? 0) - (stamina[a] ?? 0) : (stamina[a] ?? 0) - (stamina[b] ?? 0)));
+    for (const i of order) {
+      if (diff === 0) break;
+      const step = diff > 0 ? 1 : -1;
+      boxScores[i]!.minutes += step;
+      diff -= step;
+    }
+  }
+
   // Foul trouble reduces minutes; the lost minutes go to players still under the threshold.
   const adjusted = stats.map((_, i) => foulTroubleMinutes(boxScores[i]?.minutes ?? 0, boxScores[i]?.fouls ?? 0));
   const lost = stats.reduce((s, _, i) => s + ((boxScores[i]?.minutes ?? 0) - (adjusted[i] ?? 0)), 0);
-  const receivers = stats.map((_, i) => i).filter((i) => (boxScores[i]?.fouls ?? 0) < SIM_CONFIG.foulTroubleFouls);
+  // Prefer players still under the threshold; if everyone is in foul trouble, spread the lost minutes
+  // across all active players, so team minutes always sum to the full game length.
+  const underThreshold = stats.map((_, i) => i).filter((i) => (boxScores[i]?.fouls ?? 0) < SIM_CONFIG.foulTroubleFouls);
+  const receivers = underThreshold.length > 0 ? underThreshold : stats.map((_, i) => i);
   const receiverUsage = receivers.reduce((s, i) => s + (stats[i]?.player.usage ?? 0), 0);
   let given = 0;
   receivers.forEach((i, k) => {
@@ -205,6 +256,9 @@ function simulateTeam(
   boxScores.forEach((box, i) => {
     box.minutes = adjusted[i] ?? 0;
   });
+  // Redistribution must conserve the team's minutes exactly.
+  const finalMinutes = boxScores.reduce((s, b) => s + b.minutes, 0);
+  if (finalMinutes !== targetMinutes) throw new Error(`minutes not conserved: ${finalMinutes} != ${targetMinutes}`);
 
   return {
     teamId: team.id,
@@ -230,6 +284,11 @@ function freeThrowChance(freeThrow: number): number {
 function defenseOf(player: SimPlayer | undefined): number {
   if (!player) return 60;
   return (player.attributes.perimeterDefense + player.attributes.interiorDefense) / 2;
+}
+
+/** Non-shooting foul chance on a possession. Better defenders foul less often. */
+function nonShootingFoulRate(defender: SimPlayer | undefined): number {
+  return SIM_CONFIG.baseNonShootingFoulRate * Math.max(0.3, 1 + (60 - defenseOf(defender)) / 100);
 }
 
 /** Shooting-foul chance on a missed shot. Better defenders foul less often. */

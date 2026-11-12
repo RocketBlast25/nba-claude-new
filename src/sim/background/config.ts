@@ -19,6 +19,10 @@ export const SIM_CONFIG = {
   foulTroubleMinutesFactor: 0.7,
   /** Per-possession foul chance for a defender, before the defense adjustment. */
   baseFoulRate: 0.03,
+  /** Per-possession non-shooting (defensive) foul chance, before the defense adjustment. */
+  baseNonShootingFoulRate: 0.17,
+  /** Chance a non-shooting foul sends the offense to the line (bonus rule). */
+  nonShootingFoulFtRate: 0.5,
   /** Baseline make chance on a three-point attempt before the 3PT rating adjustment. */
   baseThreePct: 0.36,
   /** Baseline free-throw make chance before the free-throw rating adjustment. */

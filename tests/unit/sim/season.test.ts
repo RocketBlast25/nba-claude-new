@@ -52,6 +52,32 @@ describe('minutes adjustments (TR-background-sim-004)', () => {
   });
 });
 
+describe('team minutes guarantee (TR-background-sim-004)', () => {
+  it('keeps each team at the game length (48 + 5 per overtime period) in box-score minutes, even in foul trouble', () => {
+    const rng = new SeededRng(99);
+    const home = makeLeague(2, 3)[0]!.sim;
+    const away = makeLeague(2, 4)[1]!.sim;
+    // Raise the foul rates so many games push players into foul trouble and exercise the redistribution.
+    const saved = SIM_CONFIG.baseNonShootingFoulRate;
+    (SIM_CONFIG as { baseNonShootingFoulRate: number }).baseNonShootingFoulRate = 0.3;
+    try {
+      let troubled = 0;
+      for (let g = 0; g < 300; g++) {
+        const result = simulateGame(makeId<'game'>(`G${g}`), home, away, rng.fork());
+        for (const side of [result.home, result.away]) {
+          if (side.boxScores.some((b) => b.fouls >= SIM_CONFIG.foulTroubleFouls)) troubled++;
+          const total = side.boxScores.reduce((s, b) => s + b.minutes, 0);
+          const extra = total - SIM_CONFIG.regulationMinutes;
+          expect(extra >= 0 && extra % SIM_CONFIG.overtimeMinutes === 0).toBe(true);
+        }
+      }
+      expect(troubled).toBeGreaterThan(0);
+    } finally {
+      (SIM_CONFIG as { baseNonShootingFoulRate: number }).baseNonShootingFoulRate = saved;
+    }
+  });
+});
+
 describe('box score integrity (TR-background-sim-005)', () => {
   it('keeps every count an integer and player totals equal team totals', () => {
     const [a, b] = makeLeague(2, 9);
