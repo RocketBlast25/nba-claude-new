@@ -7,6 +7,7 @@ import { DraftRoom } from './DraftRoom';
 import { RotationEditor, TradeBuilder, FreeAgencyPanel } from './GmDesk';
 import { SavesPanel } from './SavesPanel';
 import { MyCareerDashboard } from './MyCareerDashboard';
+import { NewCareerPanel } from './NewCareerPanel';
 
 /** Tab order is the display order. Each id maps to one panel below. */
 const TABS = [
@@ -27,6 +28,8 @@ type GmSection = (typeof GM_SECTIONS)[number];
 
 /**
  * Root shell. Screens read from the Zustand store; no sim logic lives here.
+ * With no career loaded the New Career setup replaces the tabs; once a career
+ * exists the header's New Career button brings the setup back.
  * Tabs follow the WAI-ARIA tablist pattern: arrow keys move focus, Home and End jump
  * to the ends, and the active tab is the only one in the tab order.
  */
@@ -35,7 +38,9 @@ export function App() {
   const phase = useGameStore((s) => s.phase);
   const reset = useGameStore((s) => s.reset);
   const [active, setActive] = useState<TabId>('dashboard');
+  const [creating, setCreating] = useState(false);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const showSetup = !career || creating;
 
   const focusTab = (index: number) => {
     const tab = TABS[(index + TABS.length) % TABS.length];
@@ -57,57 +62,73 @@ export function App() {
     <main className="app">
       <header className="app-header">
         <h1>NBA Career Simulator</h1>
-        {career ? <p className="phase">Phase: {phase.replace('_', ' ')}</p> : null}
+        {career && !creating ? <p className="phase">Phase: {phase.replace('_', ' ')}</p> : null}
+        {career && !creating ? (
+          <button type="button" className="new-career" onClick={() => setCreating(true)}>
+            New Career
+          </button>
+        ) : null}
+        {creating ? (
+          <button type="button" onClick={() => setCreating(false)}>
+            Cancel
+          </button>
+        ) : null}
       </header>
-      <div role="tablist" aria-label="Career sections" className="tablist">
-        {TABS.map((tab, i) => {
-          const selected = tab.id === active;
-          return (
-            <button
-              key={tab.id}
-              ref={(el) => {
-                tabRefs.current[tab.id] = el;
-              }}
-              type="button"
-              role="tab"
-              id={`tab-${tab.id}`}
-              aria-selected={selected}
-              aria-controls={`panel-${tab.id}`}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => setActive(tab.id)}
-              onKeyDown={(e) => onKeyDown(e, i)}
-            >
-              {tab.label}
+      {showSetup ? (
+        <NewCareerPanel onStarted={() => setCreating(false)} />
+      ) : (
+        <>
+          <div role="tablist" aria-label="Career sections" className="tablist">
+            {TABS.map((tab, i) => {
+              const selected = tab.id === active;
+              return (
+                <button
+                  key={tab.id}
+                  ref={(el) => {
+                    tabRefs.current[tab.id] = el;
+                  }}
+                  type="button"
+                  role="tab"
+                  id={`tab-${tab.id}`}
+                  aria-selected={selected}
+                  aria-controls={`panel-${tab.id}`}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => setActive(tab.id)}
+                  onKeyDown={(e) => onKeyDown(e, i)}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+          <TabPanel id="dashboard" active={active}>
+            {career ? <CareerDashboard /> : <p>Start a career to begin.</p>}
+          </TabPanel>
+          <TabPanel id="mycareer" active={active}>
+            {career ? <MyCareerDashboard /> : <p>Start a career to begin.</p>}
+          </TabPanel>
+          <TabPanel id="gm" active={active}>
+            {career ? <GmDesk /> : <p>Start a career to begin.</p>}
+          </TabPanel>
+          <TabPanel id="playoffs" active={active}>
+            {career ? <PlayoffBracket /> : <p>Start a career to begin.</p>}
+          </TabPanel>
+          <TabPanel id="draft" active={active}>
+            {career ? <DraftRoom /> : <p>Start a career to begin.</p>}
+          </TabPanel>
+          <TabPanel id="offseason" active={active}>
+            {career ? <OffseasonHub /> : <p>Start a career to begin.</p>}
+          </TabPanel>
+          <TabPanel id="saves" active={active}>
+            <SavesPanel />
+          </TabPanel>
+          {career ? (
+            <button type="button" className="reset" onClick={() => reset()}>
+              Reset career
             </button>
-          );
-        })}
-      </div>
-      <TabPanel id="dashboard" active={active}>
-        {career ? <CareerDashboard /> : <p>Start a career to begin.</p>}
-      </TabPanel>
-      <TabPanel id="mycareer" active={active}>
-        {career ? <MyCareerDashboard /> : <p>Start a career to begin.</p>}
-      </TabPanel>
-      <TabPanel id="gm" active={active}>
-        {career ? <GmDesk /> : <p>Start a career to begin.</p>}
-      </TabPanel>
-      <TabPanel id="playoffs" active={active}>
-        {career ? <PlayoffBracket /> : <p>Start a career to begin.</p>}
-      </TabPanel>
-      <TabPanel id="draft" active={active}>
-        {career ? <DraftRoom /> : <p>Start a career to begin.</p>}
-      </TabPanel>
-      <TabPanel id="offseason" active={active}>
-        {career ? <OffseasonHub /> : <p>Start a career to begin.</p>}
-      </TabPanel>
-      <TabPanel id="saves" active={active}>
-        <SavesPanel />
-      </TabPanel>
-      {career ? (
-        <button type="button" className="reset" onClick={() => reset()}>
-          Reset career
-        </button>
-      ) : null}
+          ) : null}
+        </>
+      )}
     </main>
   );
 }

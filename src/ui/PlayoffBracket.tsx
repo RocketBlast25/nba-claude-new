@@ -14,25 +14,45 @@ export function PlayoffBracket() {
   const startPlayoffsRun = useGameStore((s) => s.startPlayoffsRun);
   const advancePlayoffsRun = useGameStore((s) => s.advancePlayoffsRun);
   const resolvePlayoffMoment = useGameStore((s) => s.resolvePlayoffMoment);
+  const seasonRun = useGameStore((s) => s.seasonRun);
+  const runOffseason = useGameStore((s) => s.runOffseason);
   const teams = useGameStore((s) => s.leagueTeams);
+
+  // Runs and standings from an earlier season are stale until the new season is played.
+  const currentRun = playoffsRun && career && playoffsRun.season === career.season ? playoffsRun : null;
+  const seasonDone =
+    seasonRun !== null && career !== null && seasonRun.season === career.season
+      ? seasonRun.standings
+      : null;
 
   const stepper =
     career?.playerMode && teams ? (
       <section aria-label="Playoff stepper">
-        {!playoffsRun ? (
+        {currentRun ? (
+          <>
+            {!currentRun.result && !currentRun.pending ? (
+              <button type="button" onClick={() => advancePlayoffsRun()}>
+                Advance
+              </button>
+            ) : null}
+            {currentRun.result ? (
+              <button type="button" onClick={() => runOffseason()}>
+                Enter Offseason
+              </button>
+            ) : null}
+          </>
+        ) : seasonDone ? (
           <button type="button" onClick={() => startPlayoffsRun(teams)}>
             Simulate Playoffs
           </button>
-        ) : !playoffsRun.result && !playoffsRun.pending ? (
-          <button type="button" onClick={() => advancePlayoffsRun()}>
-            Advance
-          </button>
-        ) : null}
-        {playoffsRun?.pending ? (
+        ) : playoffs ? null : (
+          <p>Finish the regular season to unlock the playoffs.</p>
+        )}
+        {currentRun?.pending ? (
           <KeyMomentModal
-            title={`Playoff game ${playoffsRun.pending.gameIndex + 1} (${playoffsRun.pending.homeId} vs ${playoffsRun.pending.awayId})`}
+            title={`Playoff game ${currentRun.pending.gameIndex + 1} (${currentRun.pending.homeId} vs ${currentRun.pending.awayId})`}
             attributes={controlledAttributes(career)}
-            rollSeed={seed + career.season + playoffsRun.pending.gameIndex}
+            rollSeed={seed + career.season + currentRun.pending.gameIndex}
             onResolve={(decision) => resolvePlayoffMoment(decision)}
           />
         ) : null}

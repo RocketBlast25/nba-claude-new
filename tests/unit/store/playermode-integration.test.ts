@@ -6,6 +6,7 @@ import type { CareerState } from '../../../src/sim/career/types';
 import type { Player, Team } from '../../../src/sim/core/models';
 import type { TeamId } from '../../../src/sim/core/types';
 import type { UserDecision } from '../../../src/sim/season/resumableSeason';
+import { NEW_CAREER_TEAMS } from '../../../src/sim/career/newCareer';
 
 /**
  * Expires the controlled player's contract and drops him below the re-sign threshold,
@@ -57,6 +58,30 @@ function startedPlayerCareer(seed = 42): { league: ReturnType<typeof buildLeague
   const result = useGameStore.getState().startPlayerCareer(player.id);
   expect(result).toEqual({ ok: true });
   return { league, career, player };
+}
+
+/** Steps the resumable regular season to the end, resolving every Key Moment it pauses on. */
+function playSeasonRun(): void {
+  const league = useGameStore.getState().leagueTeams!;
+  let result = useGameStore.getState().startSeasonRun(league);
+  for (let i = 0; i < 500 && result.status !== 'finished'; i++) {
+    result = result.status === 'pending'
+      ? useGameStore.getState().resolveSeasonMoment({ success: true, reward: 0 })!
+      : useGameStore.getState().advanceSeasonRun()!;
+  }
+  expect(result.status).toBe('finished');
+}
+
+/** Steps the playoff run to the Finals, resolving every Key Moment it pauses on. */
+function playPlayoffsRun(): void {
+  const league = useGameStore.getState().leagueTeams!;
+  let result = useGameStore.getState().startPlayoffsRun(league);
+  for (let i = 0; i < 500 && result.status !== 'finished'; i++) {
+    result = result.status === 'pending'
+      ? useGameStore.getState().resolvePlayoffMoment({ success: true, reward: 0 })!
+      : useGameStore.getState().advancePlayoffsRun()!;
+  }
+  expect(result.status).toBe('finished');
 }
 
 describe('player mode integration', () => {
@@ -216,5 +241,102 @@ describe('player mode integration', () => {
     expect(useGameStore.getState().loadFromSlot('slot1')).toBe(true);
     expect(useGameStore.getState().career?.playerMode?.playerId).toBe(player.id);
     expect(useGameStore.getState().career?.playerMode).toEqual(before);
+  });
+});
+
+describe('new career lifecycle', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  it('generates a league, plays season and playoffs, signs in the offseason and starts Season 2', () => {
+    expect(useGameStore.getState().career).toBeNull();
+
+    const started = useGameStore.getState().startNewCareer({
+      seed: 7,
+      userTeamId: NEW_CAREER_TEAMS.find((t) => t.id === 'DET')!.id,
+      playerName: 'Rip Hamilton',
+      position: 'SG',
+      archetype: 'sharpshooter',
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const fresh = useGameStore.getState();
+    expect(fresh.leagueTeams?.length).toBe(30);
+    expect(Object.keys(fresh.career!.rosters).length).toBe(30);
+    expect(fresh.career?.season).toBe(1);
+    expect(fresh.career?.userTeamId).toBe(started.userTeamId);
+    expect(fresh.career?.playerMode?.activeObjectives.length).toBeGreaterThan(0);
+    expect(fresh.career!.rosters[started.userTeamId]).toContain(started.playerId);
+    // Starting a career autosaves right away.
+    expect(fresh.loadFromSlot('autosave')).toBe(true);
+
+    playSeasonRun();
+    const afterSeason = useGameStore.getState();
+    expect(afterSeason.phase).toBe('playoffs');
+    expect(afterSeason.season?.standings.length).toBe(30);
+    expect(afterSeason.season?.gamesPlayed).toBeGreaterThan(0);
+    // The season's objectives are scored and cleared when the run commits.
+    expect(afterSeason.career?.playerMode?.activeObjectives).toEqual([]);
+    expect(afterSeason.seasonRun?.standings?.length).toBe(30);
+
+    playPlayoffsRun();
+    const afterPlayoffs = useGameStore.getState();
+    const champion = afterPlayoffs.playoffs!.champion;
+    expect(champion).toBeDefined();
+    expect(afterPlayoffs.playoffs!.runnerUp).not.toBe(champion);
+    expect(afterPlayoffs.playoffsRun?.result?.champion).toBe(champion);
+    // A title is recorded for the controlled player only when their team won it.
+    const trophies = afterPlayoffs.career!.playerMode!.trophies;
+    if (champion === afterPlayoffs.career!.userTeamId) {
+      expect(trophies).toContainEqual({ kind: 'championship', season: 1, teamId: champion });
+    } else {
+      expect(trophies).toEqual([]);
+    }
+
+    // Expire the controlled player's deal and drop him below the re-sign threshold,
+    // so the offseason releases him and generates free-agency offers.
+    const playerId = afterPlayoffs.career!.playerMode!.playerId;
+    useGameStore.setState((s) => ({
+      career: s.career && {
+        ...s.career,
+        players: s.career.players.map((p) =>
+          p.id === playerId ? { ...p, overall: 40, contract: { ...p.contract, yearsLeft: 1 } } : p,
+        ),
+      },
+    }));
+    useGameStore.getState().runOffseason();
+
+    const offseason = useGameStore.getState();
+    expect(offseason.career?.season).toBe(2);
+    expect(offseason.phase).toBe('offseason');
+    expect(offseason.career?.playerMode?.activeObjectives.length).toBeGreaterThan(0);
+    const offers = offseason.career!.playerMode!.pendingOffers;
+    expect(offers.length).toBeGreaterThan(0);
+
+    const offer = offers[0]!;
+    expect(useGameStore.getState().signPlayerOffer(offer)).toEqual({ ok: true });
+    const signed = useGameStore.getState();
+    expect(signed.career?.playerMode?.pendingOffers).toEqual([]);
+    expect(signed.career!.rosters[offer.teamId]).toContain(playerId);
+    expect(signed.phase).toBe('regular_season');
+
+    // Season 2 is playable straight away, starting from a clean run.
+    const nextRun = useGameStore.getState().startSeasonRun(useGameStore.getState().leagueTeams!);
+    expect(nextRun.state.season).toBe(2);
+    expect(useGameStore.getState().seasonRun?.season).toBe(2);
+    expect(useGameStore.getState().season).toBeNull();
+  });
+
+  it('rejects a new career with no player name', () => {
+    const result = useGameStore.getState().startNewCareer({
+      seed: 1,
+      playerName: '   ',
+      position: 'PG',
+      archetype: 'all_around',
+    });
+    expect(result).toEqual({ ok: false, reason: 'Enter a player name' });
+    expect(useGameStore.getState().career).toBeNull();
   });
 });

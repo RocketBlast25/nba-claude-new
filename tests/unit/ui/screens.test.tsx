@@ -39,13 +39,41 @@ describe('career UI screens', () => {
 
   it('shows the empty states before a career starts', () => {
     render(createElement(App));
-    expect(screen.getByText('Start a career to begin.')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'New career' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start MyCareer' })).toBeTruthy();
     cleanup();
     render(createElement(CareerDashboard));
     expect(screen.getByText('No career started.')).toBeTruthy();
     cleanup();
     render(createElement(KeyMomentCards));
     expect(screen.getByText('No Key Moments pending.')).toBeTruthy();
+  });
+
+  it('starts a fresh career from the New Career panel', () => {
+    render(createElement(App));
+    fireEvent.change(screen.getByLabelText('Player name'), { target: { value: 'Rip Hamilton' } });
+    fireEvent.change(screen.getByLabelText('Starting team'), { target: { value: 'DET' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start MyCareer' }));
+
+    const state = useGameStore.getState();
+    expect(state.career?.userTeamId).toBe('DET');
+    expect(state.leagueTeams?.length).toBe(30);
+    expect(Object.keys(state.career!.rosters).length).toBe(30);
+    expect(state.career?.playerMode?.activeObjectives.length).toBeGreaterThan(0);
+    const controlled = state.career!.players.find((p) => p.id === state.career!.playerMode!.playerId)!;
+    expect(controlled.name).toBe('Rip Hamilton');
+    // The shell switches from the setup form to the active career.
+    expect(screen.getByRole('tablist', { name: 'Career sections' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'New career' })).toBeNull();
+  });
+
+  it('reopens the New Career setup from the header and cancels back to the career', () => {
+    hydrateCareer(42);
+    render(createElement(App));
+    fireEvent.click(screen.getByRole('button', { name: 'New Career' }));
+    expect(screen.getByRole('region', { name: 'New career' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('tablist', { name: 'Career sections' })).toBeTruthy();
   });
 
   it('renders the populated dashboard with real standings', () => {
@@ -103,6 +131,7 @@ describe('career UI screens', () => {
   });
 
   it('switches tabs on click and keyboard, and shows only the active panel', () => {
+    hydrateCareer(42);
     render(createElement(App));
     const tablist = screen.getByRole('tablist', { name: 'Career sections' });
     const tabs = screen.getAllByRole('tab');

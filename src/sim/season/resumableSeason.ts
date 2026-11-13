@@ -7,6 +7,8 @@ import { makeId, type GameId, type TeamId } from '../core/types';
 import type { GameBoxScore } from '../core/models';
 import { seedConference, type PlayoffResult, type SeriesResult } from '../league/playoffs';
 import { winPct } from '../league/standings';
+import { aggregatePlayerSeasons } from '../league/playerSeason';
+import type { SeasonResult } from '../league/season';
 import { LEAGUE_CONFIG } from '../league/leagueConfig';
 import {
   shouldTriggerKeyMoment,
@@ -193,6 +195,38 @@ export function resumeSeason(
 /** Pure check for whether the regular season is complete. */
 export function isRegularSeasonDone(state: ResumableSeasonState): boolean {
   return state.nextGame >= state.schedule.length && state.pending === null;
+}
+
+/**
+ * Commits a finished regular-season run to the SeasonResult the rest of the game reads
+ * (standings, outcomes, box scores, player season averages). Throws when the run has
+ * not finished, because the standings only exist once it has.
+ */
+export function seasonResultFromRun(
+  state: ResumableSeasonState,
+  teams: ScheduleTeam[],
+): SeasonResult {
+  if (!state.standings) throw new Error('seasonResultFromRun: the regular season has not finished');
+  const lines = state.gameBoxScores.flatMap((g) => g.lines);
+  let totalPoints = 0;
+  let totalFgm = 0;
+  let totalFga = 0;
+  for (const line of lines) {
+    totalPoints += line.points;
+    totalFgm += line.fgm;
+    totalFga += line.fga;
+  }
+  const standings = state.standings;
+  return {
+    gamesPlayed: state.outcomes.length,
+    standings: standings.length > 0 ? standings : sortStandings(computeStandings(teams, state.outcomes), state.outcomes),
+    outcomes: state.outcomes,
+    totalPoints,
+    totalFgm,
+    totalFga,
+    playerSeasons: aggregatePlayerSeasons(lines),
+    gameBoxScores: [...state.gameBoxScores],
+  };
 }
 
 /* ------------------------------------------------------------------ */

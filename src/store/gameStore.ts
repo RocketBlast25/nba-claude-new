@@ -28,6 +28,7 @@ import {
 } from '../sim/career/freeAgency';
 import { resolveMoment, selectMoments } from '../sim/career/keyMoments';
 import { createCustomPlayer, type ArchetypeId } from '../sim/career/customPlayer';
+import { createNewCareer, NEW_CAREER_TEAMS, type NewCareerOptions } from '../sim/career/newCareer';
 import type { Player, Position } from '../sim/core/models';
 import { checkRotation } from '../sim/league/rotation';
 import { LEAGUE_CONFIG } from '../sim/league/leagueConfig';
@@ -43,6 +44,7 @@ import {
   advancePlayoffsRun,
   resumePlayoffsRun,
   resumeSeason,
+  seasonResultFromRun,
   startPlayoffsRun,
   startSeason,
   type AdvanceResult,
@@ -126,6 +128,10 @@ export interface GameStoreActions {
   offerFreeAgent: (playerId: Player['id']) => { ok: true } | { ok: false; reason: string };
   /** Moves the phase forward (for example, from draft to offseason). */
   setPhase: (phase: CareerPhase) => void;
+  /** Generates a fresh 30-team league and starts a new MyCareer from the setup screen. */
+  startNewCareer: (options: NewCareerOptions) =>
+    | { ok: true; userTeamId: TeamId; playerId: Player['id'] }
+    | { ok: false; reason: string };
   /** Adds a user-created player to the user team's roster and returns its id. */
   createPlayer: (args: { name: string; position: Position; archetype: ArchetypeId }) =>
     | { ok: true; playerId: Player['id'] }
@@ -219,7 +225,8 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const run = startSeason(career.season, userTeamId, teams, seed + career.season);
     const sim = new Map(teams.map((t) => [t.id, t.sim]));
     const result = advanceSeason(run, sim, teams);
-    set({ seasonRun: result.state });
+    // A new season starts clean: results from the previous one stay out of the way.
+    set({ season: null, playoffs: null, ...seasonRunCommit(get(), result) });
     return result;
   },
 
@@ -228,7 +235,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     if (!seasonRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
     const result = advanceSeason(seasonRun, sim, leagueTeams);
-    set({ seasonRun: result.state });
+    set(seasonRunCommit(get(), result));
     return result;
   },
 
@@ -237,7 +244,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     if (!seasonRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
     const result = resumeSeason(seasonRun, decision, sim, leagueTeams);
-    set({ seasonRun: result.state });
+    set(seasonRunCommit(get(), result));
     return result;
   },
 
@@ -245,12 +252,12 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const { career, seed, userTeamId, seasonRun } = get();
     if (!career) throw new Error('startPlayoffsRun: no career started');
     if (!userTeamId) throw new Error('startPlayoffsRun: no user team');
-    const standings = seasonRun?.standings;
+    const standings = seasonRun?.season === career.season ? seasonRun.standings : null;
     if (!standings) throw new Error('startPlayoffsRun: regular season not finished');
     const run = startPlayoffsRun(career.season, userTeamId, standings, seed + career.season);
     const sim = new Map(teams.map((t) => [t.id, t.sim]));
     const result = advancePlayoffsRun(run, playoffGameRunner(sim));
-    set({ playoffsRun: result.state, playoffs: result.state.result ?? get().playoffs });
+    set({ playoffs: null, ...playoffsRunCommit(get(), result) });
     return result;
   },
 
@@ -259,7 +266,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     if (!playoffsRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
     const result = advancePlayoffsRun(playoffsRun, playoffGameRunner(sim));
-    set({ playoffsRun: result.state, playoffs: result.state.result ?? get().playoffs });
+    set(playoffsRunCommit(get(), result));
     return result;
   },
 
@@ -268,7 +275,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     if (!playoffsRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
     const result = resumePlayoffsRun(playoffsRun, decision, playoffGameRunner(sim));
-    set({ playoffsRun: result.state, playoffs: result.state.result ?? get().playoffs });
+    set(playoffsRunCommit(get(), result));
     return result;
   },
 
@@ -372,14 +379,38 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       rng.fork(),
     );
     const withOffers = withPlayerOffers(withNewObjectives(next, career.season + 1), rng.fork());
+    // The next season's run starts from scratch; the completed season's results stay
+    // visible until then, and startSeasonRun clears them when the new season begins.
     set({
       career: { ...withOffers, season: career.season + 1 },
       draftOrder,
       phase: 'offseason',
+      seasonRun: null,
+      playoffsRun: null,
     });
   },
 
   setPhase: (phase) => set({ phase }),
+
+  startNewCareer: (options) => {
+    if (options.playerName.trim().length === 0) return { ok: false, reason: 'Enter a player name' };
+    if (!Number.isFinite(options.seed)) return { ok: false, reason: 'Seed must be a number' };
+    if (options.userTeamId && !NEW_CAREER_TEAMS.some((t) => t.id === options.userTeamId)) {
+      return { ok: false, reason: 'Unknown team' };
+    }
+    const made = createNewCareer(options);
+    set({
+      ...initialState,
+      career: made.career,
+      userTeamId: made.userTeamId,
+      seed: made.seed,
+      leagueTeams: made.leagueTeams,
+      phase: 'regular_season',
+    });
+    // The phase does not change, so the autosave subscriber would not fire for a new career.
+    writeSlot(localSlotStorage(), 'autosave', buildSave(payloadOf(get())));
+    return { ok: true, userTeamId: made.userTeamId, playerId: made.playerId };
+  },
 
   createPlayer: ({ name, position, archetype }) => {
     const { career } = get();
@@ -474,11 +505,14 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       return { ok: false, reason: 'Team is over the cap for this offer' };
     }
     const next = resolvePlayerSigning(career, playerId, offer);
+    // Once the offseason's offers are settled, the next season can start.
+    const phase = get().phase === 'offseason' ? 'regular_season' : get().phase;
     set({
       career: {
         ...next,
         playerMode: { ...career.playerMode, pendingOffers: [] },
       },
+      phase,
     });
     return { ok: true };
   },
@@ -487,11 +521,13 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const { career } = get();
     if (!career || !career.playerMode) return;
     const declined = resolvePlayerSigning(career, career.playerMode.playerId, null);
+    const phase = get().phase === 'offseason' ? 'regular_season' : get().phase;
     set({
       career: {
         ...declined,
         playerMode: { ...career.playerMode, pendingOffers: [] },
       },
+      phase,
     });
   },
 
@@ -540,6 +576,45 @@ function playoffGameRunner(sim: Map<TeamId, SimTeam>) {
     if (!h || !a) throw new Error('playoffs: unknown playoff team');
     const result = simulateGame(makeId<'game'>(`po-${home}-${away}`) as GameId, h, a, gameRng);
     return result.home.points > result.away.points;
+  };
+}
+
+/**
+ * Applies a season run's result. A finished run commits the season (standings, outcomes,
+ * box scores, player averages), scores the controlled player's objectives against it, and
+ * enables the playoffs.
+ */
+function seasonRunCommit(state: GameStoreState, result: AdvanceResult): Partial<GameStoreState> {
+  if (result.status !== 'finished') return { seasonRun: result.state };
+  const { career, leagueTeams } = state;
+  if (!career || !leagueTeams) return { seasonRun: result.state };
+  const season = seasonResultFromRun(result.state, leagueTeams);
+  const userGames = season.gameBoxScores.filter((g) => userPlaysIn(career, g));
+  return {
+    seasonRun: result.state,
+    season,
+    career: applySeasonObjectives(career, season, userGames),
+    phase: 'playoffs',
+  };
+}
+
+/**
+ * Applies a playoff run's result. A finished run commits the bracket (champion,
+ * runner-up, rounds) and records the controlled player's championship trophy when
+ * their team won it.
+ */
+function playoffsRunCommit(
+  state: GameStoreState,
+  result: PlayoffAdvanceResult,
+): Partial<GameStoreState> {
+  const playoffs = result.status === 'finished' ? result.result : result.state.result;
+  return {
+    playoffsRun: result.state,
+    playoffs: playoffs ?? state.playoffs,
+    career:
+      playoffs && state.career
+        ? recordChampionship(state.career, playoffs, state.career.season)
+        : state.career,
   };
 }
 

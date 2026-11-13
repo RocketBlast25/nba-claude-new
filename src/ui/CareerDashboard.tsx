@@ -17,15 +17,21 @@ export function CareerDashboard() {
   const startSeasonRun = useGameStore((s) => s.startSeasonRun);
   const advanceSeasonRun = useGameStore((s) => s.advanceSeasonRun);
   const resolveSeasonMoment = useGameStore((s) => s.resolveSeasonMoment);
+  const startPlayoffsRun = useGameStore((s) => s.startPlayoffsRun);
+  const playoffsRun = useGameStore((s) => s.playoffsRun);
   const seed = useGameStore((s) => s.seed);
 
   if (!career || !userTeamId) return <p>No career started.</p>;
 
+  // A run from an earlier season is stale: it is ignored until the new season starts.
+  const currentRun = seasonRun && seasonRun.season === career.season ? seasonRun : null;
+  const playoffsStarted =
+    playoffsRun !== null && playoffsRun.season === career.season;
   // Standings come from the one-shot season, or from the resumable run the stepper drives.
   const standingsRows = season
     ? sortStandings(season.standings, season.outcomes)
-    : seasonRun?.standings
-      ? sortStandings(seasonRun.standings, seasonRun.outcomes)
+    : currentRun?.standings
+      ? sortStandings(currentRun.standings, currentRun.outcomes)
       : null;
 
   const roster = (career.rosters[userTeamId] ?? [])
@@ -54,20 +60,30 @@ export function CareerDashboard() {
       </section>
       {career.playerMode ? (
         <section aria-label="Season stepper">
-          {!seasonRun ? (
+          {!currentRun ? (
             <button type="button" onClick={() => teams && startSeasonRun(teams)} disabled={!teams}>
               Simulate Season
             </button>
-          ) : seasonRun.nextGame < seasonRun.schedule.length && !seasonRun.pending ? (
+          ) : currentRun.nextGame < currentRun.schedule.length && !currentRun.pending ? (
             <button type="button" onClick={() => advanceSeasonRun()}>
               Advance
             </button>
           ) : null}
-          {seasonRun?.pending ? (
+          {currentRun?.standings && !currentRun.pending ? (
+            <p>
+              Regular season complete: {currentRun.standings.length} teams seeded.{' '}
+              {playoffsStarted ? null : (
+                <button type="button" onClick={() => teams && startPlayoffsRun(teams)}>
+                  Start Playoffs
+                </button>
+              )}
+            </p>
+          ) : null}
+          {currentRun?.pending ? (
             <KeyMomentModal
-              title={`Key Moment in game ${seasonRun.pending.gameIndex + 1} (${seasonRun.pending.homeId} vs ${seasonRun.pending.awayId})`}
+              title={`Key Moment in game ${currentRun.pending.gameIndex + 1} (${currentRun.pending.homeId} vs ${currentRun.pending.awayId})`}
               attributes={controlledAttributes(career)}
-              rollSeed={seed + career.season + seasonRun.pending.gameIndex}
+              rollSeed={seed + career.season + currentRun.pending.gameIndex}
               onResolve={(decision) => resolveSeasonMoment(decision)}
             />
           ) : null}
