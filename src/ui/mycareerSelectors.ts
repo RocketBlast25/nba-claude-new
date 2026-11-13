@@ -269,6 +269,15 @@ export function selectTradeTargets(teamIds: TeamId[], teams: Team[] | undefined)
   return teamIds.map((id) => ({ id, name: byId.get(id) ?? id }));
 }
 
+/** Turns a snake_case or slug badge id into readable words when no catalog name exists. */
+export function formatBadgeId(id: string): string {
+  return id
+    .split(/[_-]+/)
+    .filter((w) => w.length > 0)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 export const ROLE_LABELS: Record<PlayerRole, string> = {
   bench: 'Bench',
   sixth_man: '6th Man',

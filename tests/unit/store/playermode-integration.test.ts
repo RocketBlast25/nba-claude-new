@@ -231,14 +231,14 @@ describe('player mode integration', () => {
     expect(next.result.runnerUp).toBeDefined();
   });
 
-  it('round-trips player mode through a save slot', () => {
+  it('round-trips player mode through a save slot', async () => {
     const { player } = startedPlayerCareer();
-    const saved = useGameStore.getState().saveToSlot('slot1');
+    const saved = await useGameStore.getState().saveToSlot('slot1');
     expect(saved).toEqual({ ok: true });
 
     const before = useGameStore.getState().career?.playerMode;
     useGameStore.getState().reset();
-    expect(useGameStore.getState().loadFromSlot('slot1')).toBe(true);
+    expect(await useGameStore.getState().loadFromSlot('slot1')).toBe(true);
     expect(useGameStore.getState().career?.playerMode?.playerId).toBe(player.id);
     expect(useGameStore.getState().career?.playerMode).toEqual(before);
   });
@@ -249,7 +249,7 @@ describe('new career lifecycle', () => {
     useGameStore.getState().reset();
   });
 
-  it('generates a league, plays season and playoffs, signs in the offseason and starts Season 2', () => {
+  it('generates a league, plays season and playoffs, signs in the offseason and starts Season 2', async () => {
     expect(useGameStore.getState().career).toBeNull();
 
     const started = useGameStore.getState().startNewCareer({
@@ -270,7 +270,7 @@ describe('new career lifecycle', () => {
     expect(fresh.career?.playerMode?.activeObjectives.length).toBeGreaterThan(0);
     expect(fresh.career!.rosters[started.userTeamId]).toContain(started.playerId);
     // Starting a career autosaves right away.
-    expect(fresh.loadFromSlot('autosave')).toBe(true);
+    expect(await fresh.loadFromSlot('autosave')).toBe(true);
 
     playSeasonRun();
     const afterSeason = useGameStore.getState();

@@ -1,7 +1,6 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { buildLeague, careerFrom } from './leagueFixture';
 import { useGameStore } from '../../../src/store/gameStore';
-import { readSlot } from '../../../src/persistence/slots';
 
 function startedStore(seed = 42) {
   const league = buildLeague(seed);
@@ -51,24 +50,29 @@ describe('gameStore persistence wiring', () => {
     expect(useGameStore.getState().career?.userTeamId).toBe(career.userTeamId);
   });
 
-  it('saves to a slot and loads it back after a reset', () => {
+  it('saves to a slot and loads it back after a reset', async () => {
     const career = startedStore();
-    expect(useGameStore.getState().saveToSlot('slot1')).toEqual({ ok: true });
+    expect(await useGameStore.getState().saveToSlot('slot1')).toEqual({ ok: true });
 
     useGameStore.getState().reset();
     expect(useGameStore.getState().career).toBeNull();
-    expect(useGameStore.getState().loadFromSlot('slot1')).toBe(true);
+    expect(await useGameStore.getState().loadFromSlot('slot1')).toBe(true);
     expect(useGameStore.getState().career?.userTeamId).toBe(career.userTeamId);
   });
 
-  it('autosaves on a phase transition', () => {
+  it('autosaves on a phase transition', async () => {
     startedStore();
-    expect(readSlot(localStorage, 'autosave')).toBeNull();
     useGameStore.getState().setPhase('draft');
-    expect(readSlot(localStorage, 'autosave')?.payload.phase).toBe('draft');
+    // The autosave write is asynchronous; wait for the phase-transition save to settle.
+    await vi.waitFor(() => {
+      expect(useGameStore.getState().autosavedAt).not.toBeNull();
+    });
+    useGameStore.getState().reset();
+    expect(await useGameStore.getState().loadFromSlot('autosave')).toBe(true);
+    expect(useGameStore.getState().phase).toBe('draft');
   });
 
-  it('returns false when loading an empty slot', () => {
-    expect(useGameStore.getState().loadFromSlot('slot3')).toBe(false);
+  it('returns false when loading an empty slot', async () => {
+    expect(await useGameStore.getState().loadFromSlot('slot3')).toBe(false);
   });
 });

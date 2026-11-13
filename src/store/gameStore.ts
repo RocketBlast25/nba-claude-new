@@ -63,7 +63,14 @@ import { makeId, type GameId, type TeamId } from '../sim/core/types';
 import { simulateGame, type SimTeam } from '../sim/background/gameSim';
 import type { ScheduleTeam } from '../sim/league/schedule';
 import { buildSave, parseSave, serializeSave, type CareerPayload } from '../persistence/snapshot';
-import { readSlot, writeSlot, type SlotId, type SlotStorage, type SlotWriteResult } from '../persistence/slots';
+import type { SlotId } from '../persistence/slots';
+import {
+  defaultSlotStorage,
+  readSlotAsync,
+  writeSlotAsync,
+  type AsyncSlotStorage,
+  type SlotWriteResult,
+} from '../persistence/idbSlots';
 
 export type CareerPhase = 'regular_season' | 'playoffs' | 'draft' | 'offseason';
 
@@ -91,6 +98,10 @@ export interface GameStoreState {
   seasonRun: ResumableSeasonState | null;
   /** In-progress resumable playoffs. Null when no playoff run is active. */
   playoffsRun: PlayoffsRunState | null;
+  /** Timestamp of the last autosave write, for the shell's saved indicator. */
+  autosavedAt: number | null;
+  /** Set when the last autosave write failed (for example, the storage quota was exceeded). */
+  autosaveError: string | null;
 }
 
 export interface GameStoreActions {
@@ -152,9 +163,9 @@ export interface GameStoreActions {
   /** Clears the store back to its empty state. */
   reset: () => void;
   /** Saves the current career to a manual slot or autosave. */
-  saveToSlot: (slot: SlotId) => SlotWriteResult;
-  /** Loads a slot into the store. Returns false when the slot is empty or invalid. */
-  loadFromSlot: (slot: SlotId) => boolean;
+  saveToSlot: (slot: SlotId) => Promise<SlotWriteResult>;
+  /** Loads a slot into the store. Resolves false when the slot is empty or invalid. */
+  loadFromSlot: (slot: SlotId) => Promise<boolean>;
   /** Serializes the current career to a JSON string for export. */
   exportSave: () => string | null;
   /** Imports a JSON save. Invalid input leaves the store unchanged. */
@@ -176,6 +187,8 @@ const initialState: GameStoreState = {
   draftOrder: [],
   seasonRun: null,
   playoffsRun: null,
+  autosavedAt: null,
+  autosaveError: null,
 };
 
 export const useGameStore = create<GameStore>()((set, get) => ({
@@ -417,7 +430,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       phase: 'regular_season',
     });
     // The phase does not change, so the autosave subscriber would not fire for a new career.
-    writeSlot(localSlotStorage(), 'autosave', buildSave(payloadOf(get())));
+    void writeAutosave(payloadOf(get()));
     return { ok: true, userTeamId: made.userTeamId, playerId: made.playerId };
   },
 
@@ -545,11 +558,11 @@ export const useGameStore = create<GameStore>()((set, get) => ({
 
   saveToSlot: (slot) => {
     const save = buildSave(payloadOf(get()));
-    return writeSlot(localSlotStorage(), slot, save);
+    return writeSlotAsync(slotStorage(), slot, save);
   },
 
-  loadFromSlot: (slot) => {
-    const save = readSlot(localSlotStorage(), slot);
+  loadFromSlot: async (slot) => {
+    const save = await readSlotAsync(slotStorage(), slot);
     if (!save) return false;
     applyPayload(set, save.payload);
     return true;
@@ -575,8 +588,16 @@ export const useGameStore = create<GameStore>()((set, get) => ({
  */
 useGameStore.subscribe((state, prev) => {
   if (state.phase === prev.phase || !state.career) return;
-  writeSlot(localSlotStorage(), 'autosave', buildSave(payloadOf(state)));
+  void writeAutosave(payloadOf(state));
 });
+
+/** Writes the autosave slot and records the outcome for the shell's indicator. */
+async function writeAutosave(payload: CareerPayload): Promise<void> {
+  const result = await writeSlotAsync(slotStorage(), 'autosave', buildSave(payload));
+  useGameStore.setState(
+    result.ok ? { autosavedAt: Date.now(), autosaveError: null } : { autosaveError: result.error },
+  );
+}
 
 /**
  * Plays one playoff game with the series RNG, mirroring the runPlayoffs game in
@@ -664,19 +685,15 @@ function applyPayload(
   set({ ...initialState, ...p });
 }
 
-/** Browser localStorage when present; an in-memory fallback keeps Node tests working. */
-// Shared across calls so a save written in one call can be read back in a later one
-// when no browser localStorage exists (Node tests).
-const memorySlots = new Map<string, string>();
+/**
+ * IndexedDB when the browser has it; an in-memory fallback keeps Node tests working.
+ * Shared across calls so a save written in one call can be read back in a later one.
+ */
+let slots: AsyncSlotStorage | null = null;
 
-function localSlotStorage(): SlotStorage {
-  if (typeof localStorage !== 'undefined') return localStorage;
-  const mem = memorySlots;
-  return {
-    getItem: (k) => mem.get(k) ?? null,
-    setItem: (k, v) => void mem.set(k, v),
-    removeItem: (k) => void mem.delete(k),
-  };
+function slotStorage(): AsyncSlotStorage {
+  slots ??= defaultSlotStorage();
+  return slots;
 }
 
 /** Draws the user's Key Moments for one game and queues them. Pure helper. */

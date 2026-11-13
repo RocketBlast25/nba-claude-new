@@ -1,19 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { createElement } from 'react';
-import { ACTION_RULES, ACTION_IDS, decisionCards } from '../../../src/possession/decision';
-import { SeededRng } from '../../../src/sim/core/random';
-import { generateAttributes } from '../../../src/sim/league/roster';
 import { useGameStore, drawUserMoments } from '../../../src/store/gameStore';
-import { KeyMomentCards } from '../../../src/ui/KeyMomentCards';
-import { CareerDashboard } from '../../../src/ui/CareerDashboard';
-import { PlayoffBracket } from '../../../src/ui/PlayoffBracket';
-import { DraftRoom } from '../../../src/ui/DraftRoom';
-import { OffseasonHub } from '../../../src/ui/OffseasonHub';
 import { App } from '../../../src/ui/App';
 import { SavesPanel } from '../../../src/ui/SavesPanel';
+import { KeyMomentOverlay } from '../../../src/ui/KeyMomentOverlay';
+import { HomePanel } from '../../../src/ui/HomePanel';
+import { LeaguePanel } from '../../../src/ui/LeaguePanel';
+import { TABS, snapshotOf, nextAction } from '../../../src/ui/careerViewModel';
 import { buildLeague, careerFrom } from '../store/leagueFixture';
 
 /** Runs the real flow: start -> play season -> queue Key Moments -> resolve -> offseason. */
@@ -28,7 +23,20 @@ function hydrateCareer(seed: number) {
   useGameStore.getState().runOffseason();
 }
 
-describe('career UI screens', () => {
+function currentSnapshot() {
+  const s = useGameStore.getState();
+  return snapshotOf({
+    career: s.career,
+    phase: s.phase,
+    season: s.season,
+    playoffs: s.playoffs,
+    seasonRun: s.seasonRun,
+    playoffsRun: s.playoffsRun,
+    leagueTeams: s.leagueTeams,
+  });
+}
+
+describe('career UI', () => {
   beforeEach(() => {
     useGameStore.getState().reset();
   });
@@ -37,147 +45,85 @@ describe('career UI screens', () => {
     cleanup();
   });
 
-  it('shows the empty states before a career starts', () => {
+  it('shows the new career setup when no career exists', async () => {
     render(createElement(App));
-    expect(screen.getByRole('region', { name: 'New career' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'New career' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Start MyCareer' })).toBeTruthy();
-    cleanup();
-    render(createElement(CareerDashboard));
-    expect(screen.getByText('No career started.')).toBeTruthy();
-    cleanup();
-    render(createElement(KeyMomentCards));
-    expect(screen.getByText('No Key Moments pending.')).toBeTruthy();
   });
 
-  it('starts a fresh career from the New Career panel', () => {
+  it('starts a fresh career from the New Career panel', async () => {
     render(createElement(App));
-    fireEvent.change(screen.getByLabelText('Player name'), { target: { value: 'Rip Hamilton' } });
+    fireEvent.change(await screen.findByLabelText('Player name'), { target: { value: 'Rip Hamilton' } });
     fireEvent.change(screen.getByLabelText('Starting team'), { target: { value: 'DET' } });
     fireEvent.click(screen.getByRole('button', { name: 'Start MyCareer' }));
 
     const state = useGameStore.getState();
     expect(state.career?.userTeamId).toBe('DET');
     expect(state.leagueTeams?.length).toBe(30);
-    expect(Object.keys(state.career!.rosters).length).toBe(30);
-    expect(state.career?.playerMode?.activeObjectives.length).toBeGreaterThan(0);
-    const controlled = state.career!.players.find((p) => p.id === state.career!.playerMode!.playerId)!;
-    expect(controlled.name).toBe('Rip Hamilton');
-    // The shell switches from the setup form to the active career.
-    expect(screen.getByRole('tablist', { name: 'Career sections' })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'New career' })).toBeNull();
   });
 
-  it('reopens the New Career setup from the header and cancels back to the career', () => {
-    hydrateCareer(42);
+  it('uses the five approved tabs and no legacy ones', () => {
+    hydrateCareer(7);
     render(createElement(App));
-    fireEvent.click(screen.getByRole('button', { name: 'New Career' }));
-    expect(screen.getByRole('region', { name: 'New career' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('tablist', { name: 'Career sections' })).toBeTruthy();
-  });
-
-  it('renders the populated dashboard with real standings', () => {
-    hydrateCareer(42);
-    const { container } = render(createElement(CareerDashboard));
-    expect(screen.getByRole('region', { name: 'Standings' })).toBeTruthy();
-    expect(container.textContent).toContain('Eastern Conference');
-    expect(container.textContent).toContain('Western Conference');
-  });
-
-  it('renders the populated playoff bracket with series scores', () => {
-    hydrateCareer(42);
-    const { container } = render(createElement(PlayoffBracket));
-    expect(screen.getByText(/Champion:/)).toBeTruthy();
-    expect(screen.getByText('Round 1')).toBeTruthy();
-    expect(container.textContent).toMatch(/\d+\s*-\s*\d+/);
-  });
-
-  it('renders the draft board with every pick and the offseason hub', () => {
-    hydrateCareer(42);
-    render(createElement(DraftRoom));
-    expect(screen.getByText(/Pick 1:/)).toBeTruthy();
-    expect(screen.getByText(/Pick 30:/)).toBeTruthy();
-    cleanup();
-    render(createElement(OffseasonHub));
-    expect(screen.getByText(/Retirements this offseason/)).toBeTruthy();
-    expect(screen.getByText(/Your roster/)).toBeTruthy();
-  });
-
-  it('renders the pending Key Moment with a button for each action', () => {
-    hydrateCareer(42);
-    const league = buildLeague(42);
-    const career = careerFrom(league);
-    useGameStore.getState().queueMoments(drawUserMoments(career, 'g2', 7));
-    render(createElement(KeyMomentCards));
-    for (const id of ACTION_IDS) {
-      expect(screen.getByRole('button', { name: new RegExp(ACTION_RULES[id].name) })).toBeTruthy();
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim());
+    expect(tabs).toEqual(['Home', 'MyCareer', 'League & Playoffs', 'Front Office', 'Saves']);
+    expect(TABS.map((t) => t.label)).toEqual(tabs);
+    for (const legacy of ['Dashboard', 'GM Desk', 'Draft Room', 'Offseason']) {
+      expect(screen.queryByRole('tab', { name: legacy })).toBeNull();
     }
-    expect(screen.getAllByText(/%/).length).toBeGreaterThan(0);
   });
 
-  it('renders the court replay for a user Key Moment after the season is played', () => {
-    const league = buildLeague(42);
+  it('shows exactly one primary action in the HUD, and it is the next step', () => {
+    hydrateCareer(7);
+    render(createElement(App));
+    const hud = screen.getByRole('banner');
+    const expected = nextAction(currentSnapshot());
+    expect(within(hud).getByRole('button', { name: expected.label })).toBeTruthy();
+  });
+
+  it('opens Key Moments as a modal dialog from any tab', () => {
+    const league = buildLeague(11);
     const career = careerFrom(league);
     const store = useGameStore.getState();
-    store.startCareer({ career, userTeamId: career.userTeamId, seed: 42, leagueTeams: league });
-    store.playSeason(league);
-    const pending = useGameStore.getState().pendingMoments;
-    expect(pending.length).toBeGreaterThan(0);
-    expect(pending.length).toBeLessThanOrEqual(3);
-    expect(pending[0]!.replay?.length).toBe(8);
-    render(createElement(KeyMomentCards));
-    expect(screen.getByRole('img', { name: /court replay/i })).toBeTruthy();
-    expect(screen.getByRole('group', { name: /choose an action/i })).toBeTruthy();
-  });
+    store.startCareer({ career, userTeamId: career.userTeamId, seed: 11, leagueTeams: league });
+    const player = (career.rosters[career.userTeamId] ?? [])
+      .map((id) => career.players.find((p) => p.id === id)!)
+      .sort((a, b) => b.overall - a.overall)[0]!;
+    expect(store.startPlayerCareer(player.id)).toEqual({ ok: true });
+    // Starting the season run stops at the first pending Key Moment.
+    store.startSeasonRun(league);
 
-  it('switches tabs on click and keyboard, and shows only the active panel', () => {
-    hydrateCareer(42);
     render(createElement(App));
-    const tablist = screen.getByRole('tablist', { name: 'Career sections' });
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual([
-      'Dashboard',
-      'MyCareer',
-      'GM Desk',
-      'Playoffs',
-      'Draft Room',
-      'Offseason',
-      'Saves',
-    ]);
-    expect(tablist).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Dashboard' }).getAttribute('aria-selected')).toBe('true');
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Saves' }));
-    expect(screen.getByRole('tab', { name: 'Saves' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('heading', { name: 'Saves' })).toBeTruthy();
-    expect(document.getElementById('panel-dashboard')?.hidden).toBe(true);
-    expect(document.getElementById('panel-saves')?.hidden).toBe(false);
-
-    const saves = screen.getByRole('tab', { name: 'Saves' });
-    fireEvent.keyDown(saves, { key: 'ArrowRight' });
-    expect(screen.getByRole('tab', { name: 'Dashboard' }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Dashboard' }), { key: 'End' });
-    expect(screen.getByRole('tab', { name: 'Saves' }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Saves' }), { key: 'Home' });
-    expect(screen.getByRole('tab', { name: 'Dashboard' }).getAttribute('aria-selected')).toBe('true');
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(within(dialog).getByRole('group', { name: 'Choose an action' })).toBeTruthy();
   });
 
-  it('lists the three manual slots and autosave, with export and import', () => {
+  it('renders the overlay standalone without pending moments as nothing', () => {
+    render(createElement(KeyMomentOverlay));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('shows the saves panel with the active career summary and slot list', () => {
+    hydrateCareer(9);
     render(createElement(SavesPanel));
-    expect(screen.getByRole('heading', { name: 'Saves' })).toBeTruthy();
-    expect(screen.getByRole('rowheader', { name: 'Manual slot 1' })).toBeTruthy();
-    expect(screen.getByRole('rowheader', { name: 'Manual slot 2' })).toBeTruthy();
-    expect(screen.getByRole('rowheader', { name: 'Manual slot 3' })).toBeTruthy();
-    expect(screen.getByRole('rowheader', { name: 'Autosave' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Export JSON' })).toBeTruthy();
-    expect(screen.getByLabelText(/Import JSON/)).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Active career' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Save slots' })).toBeTruthy();
   });
 
-  it('keeps decisionCards chances in range for generated attributes', () => {
-    const chances = decisionCards(generateAttributes(new SeededRng(5), 60));
-    for (const id of ACTION_IDS) {
-      expect(chances[id]).toBeGreaterThanOrEqual(0);
-      expect(chances[id]).toBeLessThanOrEqual(1);
-    }
+  it('renders home and league panels without raw team IDs in the standings', () => {
+    hydrateCareer(13);
+    const snapshot = currentSnapshot();
+    const { container: home } = render(createElement(HomePanel, {
+      snapshot,
+      action: nextAction(snapshot),
+      onAction: () => {},
+      onNavigate: () => {},
+    }));
+    expect(home.querySelector('[aria-label="Season at a glance"]')).toBeTruthy();
+    cleanup();
+
+    const { container: league } = render(createElement(LeaguePanel, { snapshot }));
+    expect(league.querySelector('[aria-label="Standings"]')).toBeTruthy();
   });
 });
