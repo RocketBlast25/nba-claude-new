@@ -72,6 +72,38 @@ describe('gameStore persistence wiring', () => {
     expect(useGameStore.getState().phase).toBe('draft');
   });
 
+  it('autosaves mid-season progress and restores the exact games played and record', async () => {
+    const league = buildLeague(42);
+    const career = careerFrom(league);
+    useGameStore.getState().startCareer({ career, userTeamId: career.userTeamId, seed: 42, leagueTeams: league });
+    useGameStore.getState().startSeasonRun(league);
+    // Advance a few steps only, so the save lands mid-season rather than at the end.
+    let step = useGameStore.getState().advanceSeasonRun();
+    for (let i = 0; i < 3 && step?.status === 'pending'; i++) {
+      step = useGameStore.getState().resolveSeasonMoment({ success: true, reward: 0 });
+    }
+    const run = useGameStore.getState().seasonRun;
+    expect(run).not.toBeNull();
+    const gamesBefore = run!.outcomes.length;
+    expect(gamesBefore).toBeGreaterThan(0);
+    // A user win is a game the user's team played at home and won, or played away and lost-at-home.
+    const winsOf = (outcomes: { homeId: string; awayId: string; homeWon: boolean }[]) =>
+      outcomes.filter((o) =>
+        o.homeId === career.userTeamId ? o.homeWon : o.awayId === career.userTeamId && !o.homeWon,
+      ).length;
+    const wins = winsOf(run!.outcomes);
+
+    // The autosave is debounced; wait for the mid-season write to land, then reload it cold.
+    await vi.waitFor(() => {
+      expect(useGameStore.getState().autosavedAt).not.toBeNull();
+    });
+    useGameStore.getState().reset();
+    expect(await useGameStore.getState().loadFromSlot('autosave')).toBe(true);
+    const restored = useGameStore.getState().seasonRun;
+    expect(restored?.outcomes.length).toBe(gamesBefore);
+    expect(winsOf(restored!.outcomes)).toBe(wins);
+  });
+
   it('returns false when loading an empty slot', async () => {
     expect(await useGameStore.getState().loadFromSlot('slot3')).toBe(false);
   });

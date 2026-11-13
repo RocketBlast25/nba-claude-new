@@ -582,13 +582,44 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   },
 }));
 
+/** Delay that coalesces bursts of store updates (for example, one write per game batch). */
+const AUTOSAVE_DEBOUNCE_MS = 250;
+
 /**
- * Autosave: every phase transition writes the autosave slot. Subscribing to the store
- * covers playSeason, runOffseason and setPhase without touching each action.
+ * Fields whose change means the career's progress changed and must be saved: phase, season
+ * and playoff results, resumable run state, Key Moment queues, rosters and offers.
+ */
+const AUTOSAVED_KEYS = [
+  'career',
+  'phase',
+  'userTeamId',
+  'season',
+  'playoffs',
+  'pendingMoments',
+  'resolvedMoments',
+  'leagueTeams',
+  'draftOrder',
+  'seasonRun',
+  'playoffsRun',
+] as const satisfies readonly (keyof GameStoreState)[];
+
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Autosave: any change to the persisted progress schedules a debounced write of the autosave
+ * slot. The write runs off the UI path and the store is read when the timer fires, so the
+ * latest state is saved. Covers season and playoff runs, Key Moment resolutions, trades and
+ * contract signings without touching each action.
  */
 useGameStore.subscribe((state, prev) => {
-  if (state.phase === prev.phase || !state.career) return;
-  void writeAutosave(payloadOf(state));
+  if (!state.career) return;
+  if (AUTOSAVED_KEYS.every((key) => state[key] === prev[key])) return;
+  if (autosaveTimer !== null) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null;
+    const current = useGameStore.getState();
+    if (current.career) void writeAutosave(payloadOf(current));
+  }, AUTOSAVE_DEBOUNCE_MS);
 });
 
 /** Writes the autosave slot and records the outcome for the shell's indicator. */
