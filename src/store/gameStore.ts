@@ -4,7 +4,7 @@
  * live here; the UI reads this store and never imports sim logic directly.
  */
 import { create } from 'zustand';
-import type { CareerState, KeyMoment, KeyMomentResult, PlayerModeState } from '../sim/career/types';
+import type { CareerState, KeyMoment, KeyMomentResult, PlayerCareer, PlayerModeState } from '../sim/career/types';
 import {
   applyCoachTrustDelta,
   createPlayerCareerMode,
@@ -27,7 +27,8 @@ import {
   type PlayerOffer,
 } from '../sim/career/freeAgency';
 import { resolveMoment, selectMoments } from '../sim/career/keyMoments';
-import type { Player } from '../sim/core/models';
+import { createCustomPlayer, type ArchetypeId } from '../sim/career/customPlayer';
+import type { Player, Position } from '../sim/core/models';
 import { checkRotation } from '../sim/league/rotation';
 import { LEAGUE_CONFIG } from '../sim/league/leagueConfig';
 import { checkTrade } from '../sim/league/trade';
@@ -125,6 +126,10 @@ export interface GameStoreActions {
   offerFreeAgent: (playerId: Player['id']) => { ok: true } | { ok: false; reason: string };
   /** Moves the phase forward (for example, from draft to offseason). */
   setPhase: (phase: CareerPhase) => void;
+  /** Adds a user-created player to the user team's roster and returns its id. */
+  createPlayer: (args: { name: string; position: Position; archetype: ArchetypeId }) =>
+    | { ok: true; playerId: Player['id'] }
+    | { ok: false; reason: string };
   /** Starts a career with the given player as the controlled player, with mode state. */
   startPlayerCareer: (playerId: Player['id']) => { ok: true } | { ok: false; reason: string };
   /** Asks for a trade for the controlled player to a valid partner, preferring the given team. */
@@ -245,7 +250,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const run = startPlayoffsRun(career.season, userTeamId, standings, seed + career.season);
     const sim = new Map(teams.map((t) => [t.id, t.sim]));
     const result = advancePlayoffsRun(run, playoffGameRunner(sim));
-    set({ playoffsRun: result.state });
+    set({ playoffsRun: result.state, playoffs: result.state.result ?? get().playoffs });
     return result;
   },
 
@@ -254,7 +259,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     if (!playoffsRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
     const result = advancePlayoffsRun(playoffsRun, playoffGameRunner(sim));
-    set({ playoffsRun: result.state });
+    set({ playoffsRun: result.state, playoffs: result.state.result ?? get().playoffs });
     return result;
   },
 
@@ -263,7 +268,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     if (!playoffsRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
     const result = resumePlayoffsRun(playoffsRun, decision, playoffGameRunner(sim));
-    set({ playoffsRun: result.state });
+    set({ playoffsRun: result.state, playoffs: result.state.result ?? get().playoffs });
     return result;
   },
 
@@ -375,6 +380,34 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   },
 
   setPhase: (phase) => set({ phase }),
+
+  createPlayer: ({ name, position, archetype }) => {
+    const { career } = get();
+    if (!career) return { ok: false, reason: 'No career started' };
+    if (name.trim().length === 0) return { ok: false, reason: 'Enter a player name' };
+    const roster = career.rosters[career.userTeamId] ?? [];
+    if (roster.length >= LEAGUE_CONFIG.maxRosterSize) return { ok: false, reason: 'Team roster is full' };
+    const playerId = makeId<'player'>(`custom-${career.season}-${career.players.length + 1}`);
+    const player = createCustomPlayer({ id: playerId, name, position, archetype });
+    const newCareer: PlayerCareer = {
+      playerId,
+      yearsPro: 0,
+      mood: 50,
+      chemistry: 50,
+      unsignedOffseasons: 0,
+      retired: false,
+      retiredSeason: null,
+    };
+    set({
+      career: {
+        ...career,
+        players: [...career.players, player],
+        rosters: { ...career.rosters, [career.userTeamId]: [...roster, playerId] },
+        careers: [...career.careers, newCareer],
+      },
+    });
+    return { ok: true, playerId };
+  },
 
   startPlayerCareer: (playerId) => {
     const { career } = get();

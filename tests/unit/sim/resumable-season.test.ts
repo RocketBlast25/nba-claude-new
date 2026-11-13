@@ -193,24 +193,27 @@ describe('season objectives (fixture box scores)', () => {
 });
 
 describe('resumable playoffs parity', () => {
-  it('startPlayoffsRun + advancePlayoffsRun matches runPlayoffs for the same seed', async () => {
-    const { runPlayoffs } = await import('../../../src/sim/league/playoffs');
-    const { startPlayoffsRun, advancePlayoffsRun } = await import('../../../src/sim/season/resumableSeason');
-    const standings = Array.from({ length: 30 }, (_, i) => ({
-      teamId: `t${i}` as TeamId,
-      conference: i < 15 ? ('East' as const) : ('West' as const),
-      wins: 60 - i,
-      losses: 22 + i,
-    }));
-    const playGame = (_home: TeamId, _away: TeamId, rng: SeededRng) => rng.next() < 0.5;
-    const oneShot = runPlayoffs(standings, playGame, new SeededRng(4242));
-    // A user team outside the playoffs never pauses the run.
-    const run = startPlayoffsRun(2026, 'no-such-team' as TeamId, standings, 4242);
-    const stepped = advancePlayoffsRun(run, playGame);
-    expect(stepped.status).toBe('finished');
-    if (stepped.status !== 'finished') return;
-    expect(stepped.result.champion).toBe(oneShot.champion);
-    expect(stepped.result.runnerUp).toBe(oneShot.runnerUp);
-    expect(stepped.result.exitOrder).toEqual(oneShot.exitOrder);
-  });
+  it.each([101, 2026, 4242, 7777, 99999])(
+    'startPlayoffsRun + advancePlayoffsRun matches runPlayoffs for seed %i',
+    async (seed) => {
+      const { runPlayoffs } = await import('../../../src/sim/league/playoffs');
+      const { startPlayoffsRun, advancePlayoffsRun } = await import('../../../src/sim/season/resumableSeason');
+      const standings = Array.from({ length: 30 }, (_, i) => ({
+        teamId: `t${i}` as TeamId,
+        conference: i < 15 ? ('East' as const) : ('West' as const),
+        wins: 60 - i,
+        losses: 22 + i,
+      }));
+      const playGame = (_home: TeamId, _away: TeamId, rng: SeededRng) => rng.next() < 0.5;
+      const oneShot = runPlayoffs(standings, playGame, new SeededRng(seed));
+      // A user team outside the playoffs never pauses the run.
+      const run = startPlayoffsRun(2026, 'no-such-team' as TeamId, standings, seed);
+      const stepped = advancePlayoffsRun(run, playGame);
+      expect(stepped.status).toBe('finished');
+      if (stepped.status !== 'finished') return;
+      expect(stepped.result.champion).toBe(oneShot.champion);
+      expect(stepped.result.runnerUp).toBe(oneShot.runnerUp);
+      expect(stepped.result.exitOrder).toEqual(oneShot.exitOrder);
+    },
+  );
 });

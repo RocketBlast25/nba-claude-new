@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { createElement } from 'react';
 import { useGameStore } from '../../../src/store/gameStore';
 import { MyCareerDashboard } from '../../../src/ui/MyCareerDashboard';
+import { CareerDashboard } from '../../../src/ui/CareerDashboard';
+import type { PlayerOffer } from '../../../src/sim/career/freeAgency';
 import { selectAttributeGroups, selectSuperstarStandings, selectTrophyGroups, formatDelta } from '../../../src/ui/mycareerSelectors';
 import { formatBadgeId } from '../../../src/ui/MyCareerDashboard';
 import type { SeasonObjective } from '../../../src/sim/career/keyMomentTriggers';
@@ -188,5 +190,169 @@ describe('MyCareer selectors', () => {
       15,
     );
     expect(rows).toEqual([]);
+  });
+});
+
+describe('MyCareer player-career actions (UI clicks)', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  type Career = NonNullable<ReturnType<typeof useGameStore.getState>['career']>;
+
+  /** Highest-overall player on the user roster, which is the dashboard's default pick. */
+  function controlledId(career: Career) {
+    const roster = (career.rosters[career.userTeamId] ?? [])
+      .map((id) => career.players.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => p !== undefined)
+      .sort((a, b) => b.overall - a.overall);
+    return roster[0]!.id;
+  }
+
+  /** Starts a player career on the code's own default player, as the setup list would. */
+  function playerCareer(seed: number) {
+    const league = startCareer(seed);
+    const playerId = controlledId(useGameStore.getState().career!);
+    expect(useGameStore.getState().startPlayerCareer(playerId)).toEqual({ ok: true });
+    return { league, playerId };
+  }
+
+  /** Expires the controlled player's contract and, when given, holds one offer for them. */
+  function expireContract(playerId: string, offer: PlayerOffer | null) {
+    useGameStore.setState((s) => {
+      if (!s.career || !s.career.playerMode) return {};
+      return {
+        career: {
+          ...s.career,
+          players: s.career.players.map((p) =>
+            p.id === playerId ? { ...p, contract: { ...p.contract, yearsLeft: 0 } } : p,
+          ),
+          playerMode: { ...s.career.playerMode, pendingOffers: offer ? [offer] : [] },
+        },
+      };
+    });
+  }
+
+  /** A small, cap-safe offer from another team. */
+  function offerFrom(career: Career): PlayerOffer {
+    const teamId = (Object.keys(career.rosters) as PlayerOffer['teamId'][]).find(
+      (id) => id !== career.userTeamId,
+    )!;
+    return { teamId, salary: 1000, years: 2, teamOverall: 70, marketSize: 50, projectedRole: 'starter' };
+  }
+
+  it('starts a player career from the setup list', () => {
+    startCareer(42);
+    render(createElement(MyCareerDashboard));
+    expect(screen.getByRole('region', { name: 'Career setup' })).toBeTruthy();
+    const pick = screen.getAllByRole('button', { name: /^Start career with/ })[0]!;
+    fireEvent.click(pick);
+    expect(useGameStore.getState().career?.playerMode).toBeDefined();
+  });
+
+  it('creates a custom player from the setup form and starts their career', () => {
+    startCareer(42);
+    render(createElement(MyCareerDashboard));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ace Carter' } });
+    fireEvent.change(screen.getByLabelText('Position'), { target: { value: 'SG' } });
+    fireEvent.change(screen.getByLabelText('Archetype'), { target: { value: 'sharpshooter' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create player' }));
+
+    const career = useGameStore.getState().career!;
+    expect(career.playerMode).toBeDefined();
+    const created = career.players.find((p) => p.id === career.playerMode!.playerId)!;
+    expect(created.name).toBe('Ace Carter');
+    expect(created.position).toBe('SG');
+    expect(created.attributes.threePoint).toBeGreaterThan(created.attributes.interiorDefense);
+    expect(created.contract.type).toBe('rookie');
+  });
+
+  it('reports a trade rejection while the player is not unhappy enough', () => {
+    playerCareer(42);
+    render(createElement(MyCareerDashboard));
+    fireEvent.click(screen.getByRole('button', { name: 'Request Trade' }));
+    expect(screen.getByRole('status').textContent).toBe('Trade rejected: Trade is not requested yet.');
+  });
+
+  it('approves a trade and moves the player once the trade is requested', () => {
+    const { playerId } = playerCareer(42);
+    const before = useGameStore.getState().career!;
+    useGameStore.setState({
+      career: {
+        ...before,
+        playerMode: { ...before.playerMode!, unhappySeasons: 2 },
+        careers: before.careers.map((c) =>
+          c.playerId === playerId ? { ...c, unsignedOffseasons: 2 } : c,
+        ),
+      },
+    });
+
+    render(createElement(MyCareerDashboard));
+    fireEvent.click(screen.getByRole('button', { name: 'Request Trade' }));
+
+    const status = screen.getByRole('status').textContent ?? '';
+    expect(status).toMatch(/^Trade approved: moved to T\d+\.$/);
+    const next = useGameStore.getState().career!;
+    const onRoster = (teamId: string) => next.rosters[teamId as PlayerOffer['teamId']] ?? [];
+    expect(onRoster(before.userTeamId)).not.toContain(playerId);
+    expect(onRoster(status.replace(/^Trade approved: moved to |\.$/g, ''))).toContain(playerId);
+  });
+
+  it('signs a pending free agency offer from its card', () => {
+    const { playerId } = playerCareer(42);
+    const career = useGameStore.getState().career!;
+    const offer = offerFrom(career);
+    expireContract(playerId, offer);
+
+    render(createElement(MyCareerDashboard));
+    const sign = screen.getByRole('button', { name: `Sign with ${offer.teamId}` });
+    fireEvent.click(sign);
+
+    const next = useGameStore.getState().career!;
+    expect(next.playerMode!.pendingOffers).toEqual([]);
+    expect(next.rosters[offer.teamId] ?? []).toContain(playerId);
+    expect(next.rosters[next.userTeamId] ?? []).not.toContain(playerId);
+    expect(next.players.find((p) => p.id === playerId)!.contract.yearsLeft).toBe(offer.years);
+  });
+
+  it('declines every pending offer and counts another unsigned offseason', () => {
+    const { playerId } = playerCareer(42);
+    const career = useGameStore.getState().career!;
+    expireContract(playerId, offerFrom(career));
+
+    render(createElement(MyCareerDashboard));
+    fireEvent.click(screen.getByRole('button', { name: 'Decline All' }));
+
+    const next = useGameStore.getState().career!;
+    expect(next.playerMode!.pendingOffers).toEqual([]);
+    expect(next.careers.find((c) => c.playerId === playerId)!.unsignedOffseasons).toBe(1);
+  });
+
+  it('resolves a pending Key Moment from the season stepper', () => {
+    let pending = false;
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      useGameStore.getState().reset();
+      const league = startCareer(seed);
+      const career = useGameStore.getState().career!;
+      useGameStore.getState().startPlayerCareer(controlledId(career));
+      const result = useGameStore.getState().startSeasonRun(league);
+      if (result.status === 'pending') {
+        pending = true;
+        break;
+      }
+    }
+    expect(pending).toBe(true);
+
+    render(createElement(CareerDashboard));
+    const dialog = screen.getByRole('dialog', { name: 'Key Moment' });
+    const before = useGameStore.getState().seasonRun!.resolved.length;
+    const action = within(dialog).getAllByRole('button', { name: /\(\d+%\)$/ })[0]!;
+    fireEvent.click(action);
+
+    expect(useGameStore.getState().seasonRun!.resolved.length).toBe(before + 1);
   });
 });

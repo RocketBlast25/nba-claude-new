@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
-import { SeededRng } from '../sim/core/random';
 import {
   findTradeDestination,
-  generatePlayerOffers,
   scoreOfferForPlayer,
   type CareerPriority,
 } from '../sim/career/freeAgency';
 import { shouldRequestTrade } from '../sim/career/playerMode';
 import type { SeasonObjective } from '../sim/career/keyMomentTriggers';
-import type { Badge, Player, Attributes } from '../sim/core/models';
+import type { Badge, Player, Attributes, Position } from '../sim/core/models';
+import type { CareerState } from '../sim/career/types';
+import { ARCHETYPES, POSITION_OPTIONS, type ArchetypeId } from '../sim/career/customPlayer';
 import type { PlayerId } from '../sim/core/types';
 import { useGameStore } from '../store/gameStore';
 import { deriveRole, type PlayerCareerMode } from '../sim/career/playerMode';
@@ -67,17 +67,6 @@ const PRIORITIES: { id: CareerPriority; label: string }[] = [
   { id: 'market_size', label: 'Market Size' },
 ];
 
-/** Offers for the player, ranked by score under the chosen priority (highest first). */
-function rankedOffers(
-  career: Parameters<typeof generatePlayerOffers>[0],
-  player: Player,
-  priority: CareerPriority,
-) {
-  return generatePlayerOffers(career, player, new SeededRng(player.overall * 1000 + player.age))
-    .map((o) => ({ ...o, score: scoreOfferForPlayer(o, priority) }))
-    .sort((a, b) => b.score - a.score);
-}
-
 export function MyCareerDashboard({
   playerId,
   mode = null,
@@ -89,7 +78,12 @@ export function MyCareerDashboard({
 }: MyCareerDashboardProps) {
   const career = useGameStore((s) => s.career);
   const season = useGameStore((s) => s.season);
+  const requestPlayerTrade = useGameStore((s) => s.requestPlayerTrade);
+  const signPlayerOffer = useGameStore((s) => s.signPlayerOffer);
+  const declineAllOffers = useGameStore((s) => s.declineAllOffers);
   const [priority, setPriority] = useState<CareerPriority>('max_money');
+  const [tradeResult, setTradeResult] = useState<string | null>(null);
+  const [offerResult, setOfferResult] = useState<string | null>(null);
 
   const player: Player | null = useMemo(() => {
     if (!career) return null;
@@ -118,7 +112,14 @@ export function MyCareerDashboard({
   const tradeTargets = shouldRequestTrade(career.careers.find((c) => c.playerId === player.id)?.unsignedOffseasons ?? 0)
     ? findTradeDestination(career, player.id)
     : [];
-  const offers = contract.expiring ? rankedOffers(career, player, priority) : [];
+  const tradeTargetId = tradeTargets[0];
+  // Signing only accepts an offer the store holds as pendingOffers, so render that exact
+  // list, scored and ranked by the chosen priority.
+  const offers = contract.expiring
+    ? (career.playerMode?.pendingOffers ?? [])
+        .map((o) => ({ ...o, score: scoreOfferForPlayer(o, priority) }))
+        .sort((a, b) => b.score - a.score)
+    : [];
   const badges = selectBadges(player, badgeCatalog);
   const objectiveRows = selectObjectiveStatuses(
     objectives,
@@ -134,6 +135,8 @@ export function MyCareerDashboard({
   return (
     <section aria-label="MyCareer">
       <h2>MyCareer</h2>
+
+      {career.playerMode ? null : <CareerSetup career={career} />}
 
       <section aria-label="Player card">
         <h3>{header.name}</h3>
@@ -216,6 +219,12 @@ export function MyCareerDashboard({
         ) : (
           <p>Trade request not available yet.</p>
         )}
+        {career.playerMode ? (
+          <button type="button" onClick={() => setTradeResult(describeTrade(requestPlayerTrade(tradeTargetId)))}>
+            Request Trade
+          </button>
+        ) : null}
+        {tradeResult ? <p role="status">{tradeResult}</p> : null}
       </section>
 
       {contract.expiring && (
@@ -238,10 +247,17 @@ export function MyCareerDashboard({
           <ol>
             {offers.map((o) => (
               <li key={o.teamId}>
-                {o.teamId}: ${o.salary.toLocaleString()} for {o.years} yr(s), score {o.score.toFixed(1)}
+                {o.teamId}: ${o.salary.toLocaleString()} for {o.years} yr(s), score {o.score.toFixed(1)}{' '}
+                <button type="button" onClick={() => setOfferResult(describeSigning(signPlayerOffer(o)))}>
+                  Sign with {o.teamId}
+                </button>
               </li>
             ))}
           </ol>
+          <button type="button" onClick={() => declineAllOffers()}>
+            Decline All
+          </button>
+          {offerResult ? <p role="status">{offerResult}</p> : null}
         </section>
       )}
 
@@ -291,6 +307,94 @@ export function MyCareerDashboard({
       </section>
     </section>
   );
+}
+
+/**
+ * Create / Pick Your Player entry point, shown while the career has no controlled
+ * player. The dashboard below it still works, so an existing career stays inspectable.
+ */
+function CareerSetup({ career }: { career: CareerState }) {
+  const startPlayerCareer = useGameStore((s) => s.startPlayerCareer);
+  const createPlayer = useGameStore((s) => s.createPlayer);
+  const [name, setName] = useState('');
+  const [position, setPosition] = useState<Position>('PG');
+  const [archetype, setArchetype] = useState<ArchetypeId>('all_around');
+  const [error, setError] = useState<string | null>(null);
+
+  const roster = (career.rosters[career.userTeamId] ?? [])
+    .map((id) => career.players.find((p) => p.id === id))
+    .filter((p): p is Player => p !== undefined);
+
+  const start = (playerId: Player['id']) => {
+    const started = startPlayerCareer(playerId);
+    setError(started.ok ? null : started.reason);
+  };
+
+  return (
+    <section aria-label="Career setup">
+      <h2>Pick Your Player</h2>
+      <p>Choose a player on {career.userTeamId} to control for this career.</p>
+      <ul>
+        {roster.map((p) => (
+          <li key={p.id}>
+            {p.name} · {p.position} · OVR {p.overall}{' '}
+            <button type="button" onClick={() => start(p.id)}>
+              Start career with {p.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form
+        aria-label="Create your own player"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const made = createPlayer({ name, position, archetype });
+          if (!made.ok) {
+            setError(made.reason);
+            return;
+          }
+          start(made.playerId);
+        }}
+      >
+        <h3>Create your own player</h3>
+        <label>
+          Name <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          Position{' '}
+          <select value={position} onChange={(e) => setPosition(e.target.value as Position)}>
+            {POSITION_OPTIONS.map((pos) => (
+              <option key={pos} value={pos}>
+                {pos}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Archetype{' '}
+          <select value={archetype} onChange={(e) => setArchetype(e.target.value as ArchetypeId)}>
+            {ARCHETYPES.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit">Create player</button>
+        {error ? <p role="alert">{error}</p> : null}
+      </form>
+    </section>
+  );
+}
+
+/** Live trade feedback: the approved destination, or the store's rejection reason. */
+function describeTrade(result: { ok: true; otherTeamId: string } | { ok: false; reason: string }): string {
+  return result.ok ? `Trade approved: moved to ${result.otherTeamId}.` : `Trade rejected: ${result.reason}.`;
+}
+
+/** Live signing feedback for a free agency offer. */
+function describeSigning(result: { ok: true } | { ok: false; reason: string }): string {
+  return result.ok ? 'Offer signed.' : `Signing failed: ${result.reason}.`;
 }
 
 /** Turns a snake_case or slug badge id into readable words when no catalog name exists. */

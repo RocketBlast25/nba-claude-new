@@ -3,6 +3,7 @@ import { sortStandings, winPct } from '../sim/league/standings';
 import { payrollOf, capSpace } from '../sim/league/economy';
 import { ROSTER_FLOOR } from '../sim/career/careerLoop';
 import { KeyMomentCards } from './KeyMomentCards';
+import { KeyMomentModal } from './KeyMomentModal';
 import { GameLog } from './GameLog';
 
 /** Season overview, the user roster summary, and conference standings. */
@@ -12,8 +13,20 @@ export function CareerDashboard() {
   const userTeamId = useGameStore((s) => s.userTeamId);
   const playSeason = useGameStore((s) => s.playSeason);
   const teams = useGameStore((s) => s.leagueTeams);
+  const seasonRun = useGameStore((s) => s.seasonRun);
+  const startSeasonRun = useGameStore((s) => s.startSeasonRun);
+  const advanceSeasonRun = useGameStore((s) => s.advanceSeasonRun);
+  const resolveSeasonMoment = useGameStore((s) => s.resolveSeasonMoment);
+  const seed = useGameStore((s) => s.seed);
 
   if (!career || !userTeamId) return <p>No career started.</p>;
+
+  // Standings come from the one-shot season, or from the resumable run the stepper drives.
+  const standingsRows = season
+    ? sortStandings(season.standings, season.outcomes)
+    : seasonRun?.standings
+      ? sortStandings(seasonRun.standings, seasonRun.outcomes)
+      : null;
 
   const roster = (career.rosters[userTeamId] ?? [])
     .map((id) => career.players.find((p) => p.id === id))
@@ -39,9 +52,30 @@ export function CareerDashboard() {
           <li>Payroll: {payroll} (cap space {capSpace(payroll)})</li>
         </ul>
       </section>
-      {season ? (
-        <Standings rows={sortStandings(season.standings, season.outcomes)} userTeamId={userTeamId} />
-      ) : (
+      {career.playerMode ? (
+        <section aria-label="Season stepper">
+          {!seasonRun ? (
+            <button type="button" onClick={() => teams && startSeasonRun(teams)} disabled={!teams}>
+              Simulate Season
+            </button>
+          ) : seasonRun.nextGame < seasonRun.schedule.length && !seasonRun.pending ? (
+            <button type="button" onClick={() => advanceSeasonRun()}>
+              Advance
+            </button>
+          ) : null}
+          {seasonRun?.pending ? (
+            <KeyMomentModal
+              title={`Key Moment in game ${seasonRun.pending.gameIndex + 1} (${seasonRun.pending.homeId} vs ${seasonRun.pending.awayId})`}
+              attributes={controlledAttributes(career)}
+              rollSeed={seed + career.season + seasonRun.pending.gameIndex}
+              onResolve={(decision) => resolveSeasonMoment(decision)}
+            />
+          ) : null}
+        </section>
+      ) : null}
+      {standingsRows ? (
+        <Standings rows={standingsRows} userTeamId={userTeamId} />
+      ) : career.playerMode ? null : (
         <button type="button" onClick={() => teams && playSeason(teams)} disabled={!teams}>
           Play season
         </button>
@@ -50,6 +84,13 @@ export function CareerDashboard() {
       <KeyMomentCards />
     </div>
   );
+}
+
+/** Attributes of the MyCareer player, who drives every Key Moment roll. */
+function controlledAttributes(career: NonNullable<ReturnType<typeof useGameStore.getState>['career']>) {
+  const player = career.players.find((p) => p.id === career.playerMode?.playerId);
+  if (!player) throw new Error('controlledAttributes: MyCareer player not found');
+  return player.attributes;
 }
 
 function Standings({ rows, userTeamId }: { rows: { teamId: string; conference: 'East' | 'West'; wins: number; losses: number }[]; userTeamId: string }) {
