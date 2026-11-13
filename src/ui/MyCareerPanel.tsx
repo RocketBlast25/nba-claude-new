@@ -5,7 +5,9 @@ import type { CareerState } from '../sim/career/types';
 import type { SeasonObjective } from '../sim/career/keyMomentTriggers';
 import { ARCHETYPES, POSITION_OPTIONS, type ArchetypeId } from '../sim/career/customPlayer';
 import { deriveRole, emptyCareerStats } from '../sim/career/playerMode';
-import { rankAgainstGoats } from '../sim/career/goatRanking';
+import { rankAgainstGoats, userGoatProfile } from '../sim/career/goatRanking';
+import { buildTaleOfTheTape, nextMilestone } from '../sim/career/goatCompare';
+import { legendById } from '../sim/career/goatCatalog';
 import { useGameStore } from '../store/gameStore';
 import {
   ROLE_LABELS,
@@ -44,6 +46,11 @@ export interface MyCareerPanelProps {
  * GOAT board) and the contract summary, split into pills so no one page is a wall.
  * Contract moves, trade requests and offers live in Front Office.
  */
+/** Per-game averages show one decimal; counts and totals are whole numbers. */
+function formatTape(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 export function MyCareerPanel({
   playerId,
   previousAttributes = null,
@@ -55,6 +62,7 @@ export function MyCareerPanel({
 }: MyCareerPanelProps) {
   const career = useGameStore((s) => s.career);
   const [section, setSection] = useState<Section>('Overview');
+  const [compareId, setCompareId] = useState<string | null>(null);
 
   const player: Player | null = useMemo(() => {
     if (!career) return null;
@@ -102,6 +110,10 @@ export function MyCareerPanel({
   const stats = career.playerMode?.careerStats ?? emptyCareerStats();
   const board = rankAgainstGoats(career, player.id);
   const userRow = board.find((e) => e.isUser) ?? null;
+  const compareLegend = compareId ? legendById(compareId) ?? null : null;
+  const userProfile = compareLegend ? userGoatProfile(career, player.id) : null;
+  const tape = compareLegend && userProfile ? buildTaleOfTheTape(userProfile, compareLegend) : null;
+  const milestone = userProfile ? nextMilestone(userProfile) : null;
 
   return (
     <section aria-label="MyCareer" className="career">
@@ -296,8 +308,21 @@ export function MyCareerPanel({
                   <tr key={`${row.rank}-${row.name}`} aria-current={row.isUser ? 'true' : undefined}>
                     <td className="num">{row.rank}</td>
                     <th scope="row">
-                      {row.name}
-                      {row.isUser ? ' (you)' : ''}
+                      {row.legendId ? (
+                        <button
+                          type="button"
+                          className="link-button"
+                          aria-pressed={compareId === row.legendId}
+                          onClick={() => setCompareId(row.legendId)}
+                        >
+                          {row.name}
+                        </button>
+                      ) : (
+                        <>
+                          {row.name}
+                          {row.isUser ? ' (you)' : ''}
+                        </>
+                      )}
                     </th>
                     <td>{row.tier}</td>
                     <td className="num">{row.goatScore.toFixed(1)}</td>
@@ -306,6 +331,46 @@ export function MyCareerPanel({
               </tbody>
             </table>
             {userRow?.nextMilestoneHint ? <p className="hint">{userRow.nextMilestoneHint}</p> : null}
+            {tape && compareLegend && milestone ? (
+              <div className="tape" aria-label="Tale of the Tape">
+                <h3>Tale of the Tape: you vs {compareLegend.name}</h3>
+                <table className="stat-table">
+                  <thead>
+                    <tr>
+                      <th scope="col" className="num">You</th>
+                      <th scope="col">Stat</th>
+                      <th scope="col" className="num">{compareLegend.name}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tape.rows.map((row) => (
+                      <tr key={row.key} data-leader={row.leader}>
+                        <td className="num">{formatTape(row.user)}</td>
+                        <th scope="row">{row.label}</th>
+                        <td className="num">{formatTape(row.legend)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <h3>Next Milestone</h3>
+                {milestone.target ? (
+                  <>
+                    <p className="hint">
+                      Pass {milestone.target.name} with {Math.ceil(milestone.scoreGap * 10) / 10} more GOAT score.
+                    </p>
+                    <ul>
+                      {milestone.gaps.map((gap) => (
+                        <li key={gap.key}>
+                          {gap.needed} more {gap.label}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p className="hint">You already rank above every legend.</p>
+                )}
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

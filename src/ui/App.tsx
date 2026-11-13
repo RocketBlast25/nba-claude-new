@@ -7,6 +7,8 @@ import { LeaguePanel } from './LeaguePanel';
 import { FrontOfficePanel } from './FrontOfficePanel';
 import { SavesPanel } from './SavesPanel';
 import { KeyMomentOverlay } from './KeyMomentOverlay';
+import { AwardsRecapCard } from './AwardsRecapCard';
+import { RetirementCeremony } from './RetirementCeremony';
 import {
   TABS,
   nextAction,
@@ -232,6 +234,8 @@ export function App() {
       </TabPanel>
 
       <KeyMomentOverlay />
+      <AwardsRecapCard />
+      <RetirementCeremony />
     </main>
   );
 }

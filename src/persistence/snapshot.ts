@@ -5,6 +5,7 @@
  */
 import type { CareerState } from '../sim/career/types';
 import { emptyCareerStats, type CareerStats } from '../sim/career/playerMode';
+import type { AwardRecapEntry, RecapAwardKind } from '../sim/career/awardsRecap';
 import type { KeyMoment, KeyMomentResult } from '../sim/career/types';
 import type { DraftPick } from '../sim/league/draft';
 import type { PlayoffResult } from '../sim/league/playoffs';
@@ -34,6 +35,17 @@ export interface CareerPayload {
   seasonRun?: ResumableSeasonState | null;
   /** In-progress playoff run. Absent on saves from before playoff runs existed. */
   playoffsRun?: PlayoffsRunState | null;
+  /** Awards recap for the latest finished season or Finals. Absent on older saves. */
+  awardsRecap?: AwardsRecapPayload | null;
+}
+
+/** The awards recap shown after a season or the Finals, saved so it survives a reload. */
+export interface AwardsRecapPayload {
+  /** 'regular_season' after the season, 'finals' after the playoffs. */
+  stage: 'regular_season' | 'finals';
+  season: number;
+  entries: AwardRecapEntry[];
+  userAwards: RecapAwardKind[];
 }
 
 export interface CareerSave {

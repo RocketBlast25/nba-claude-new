@@ -62,7 +62,24 @@ import { SeededRng } from '../sim/core/random';
 import { makeId, type GameId, type TeamId } from '../sim/core/types';
 import { simulateGame, type SimTeam } from '../sim/background/gameSim';
 import type { ScheduleTeam } from '../sim/league/schedule';
-import { buildSave, parseSave, serializeSave, type CareerPayload } from '../persistence/snapshot';
+import {
+  buildSave,
+  parseSave,
+  serializeSave,
+  type AwardsRecapPayload,
+  type CareerPayload,
+} from '../persistence/snapshot';
+import {
+  buildAwardsRecap,
+  buildFinalsMvpBallot,
+  type RecapAwardKind,
+} from '../sim/career/awardsRecap';
+import {
+  buildHallOfFameEntry,
+  canRetire,
+  type HallOfFameEntry,
+} from '../sim/career/hallOfFame';
+import { defaultHallOfFameStorage, type HallOfFameStorage } from '../persistence/hallOfFameStore';
 import type { SlotId } from '../persistence/slots';
 import {
   defaultSlotStorage,
@@ -98,6 +115,10 @@ export interface GameStoreState {
   seasonRun: ResumableSeasonState | null;
   /** In-progress resumable playoffs. Null when no playoff run is active. */
   playoffsRun: PlayoffsRunState | null;
+  /** Awards recap for the latest finished season or Finals. Null when dismissed or none yet. */
+  awardsRecap: AwardsRecapPayload | null;
+  /** Retired players in the Hall of Fame trophy room, loaded from persistent storage. */
+  hallOfFame: HallOfFameEntry[];
   /** Timestamp of the last autosave write, for the shell's saved indicator. */
   autosavedAt: number | null;
   /** Set when the last autosave write failed (for example, the storage quota was exceeded). */
@@ -160,6 +181,12 @@ export interface GameStoreActions {
   signPlayerOffer: (offer: PlayerOffer) => { ok: true } | { ok: false; reason: string };
   /** Declines every pending offer, leaving the player unsigned for another season. */
   declineAllOffers: () => void;
+  /** Closes the awards recap card. */
+  dismissAwardsRecap: () => void;
+  /** Retires the controlled player, locks their legacy into the Hall of Fame and returns the entry. */
+  retireAndEnterHallOfFame: () => { ok: true; entry: HallOfFameEntry } | { ok: false; reason: string };
+  /** Loads the persistent Hall of Fame list into the store. */
+  loadHallOfFame: () => Promise<void>;
   /** Clears the store back to its empty state. */
   reset: () => void;
   /** Saves the current career to a manual slot or autosave. */
@@ -187,9 +214,19 @@ const initialState: GameStoreState = {
   draftOrder: [],
   seasonRun: null,
   playoffsRun: null,
+  awardsRecap: null,
+  hallOfFame: [],
   autosavedAt: null,
   autosaveError: null,
 };
+
+/** Shared trophy-room storage. Tests can swap it through the store's setHallOfFameStorage. */
+let hallOfFameStorage: HallOfFameStorage = defaultHallOfFameStorage();
+
+/** Replaces the trophy-room storage backend (tests use an in-memory one). */
+export function setHallOfFameStorage(storage: HallOfFameStorage): void {
+  hallOfFameStorage = storage;
+}
 
 export const useGameStore = create<GameStore>()((set, get) => ({
   ...initialState,
@@ -234,6 +271,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       phase: 'playoffs',
       pendingMoments: [...get().pendingMoments, ...moments],
       career: withObjectives,
+      awardsRecap: buildSeasonRecap(career, season),
     });
   },
 
@@ -554,6 +592,38 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     });
   },
 
+  dismissAwardsRecap: () => set({ awardsRecap: null }),
+
+  retireAndEnterHallOfFame: () => {
+    const { career, hallOfFame } = get();
+    const userId = career?.playerMode?.playerId;
+    if (!career || !userId || !canRetire(career, userId)) {
+      return { ok: false, reason: 'Only an active player career can retire.' };
+    }
+    const entry = buildHallOfFameEntry(career, userId);
+    const nextCareer: CareerState = {
+      ...career,
+      careers: career.careers.map((row) =>
+        row.playerId === userId ? { ...row, retired: true, retiredSeason: career.season } : row,
+      ),
+    };
+    const nextHall = [...hallOfFame.filter((e) => e.playerId !== entry.playerId), entry];
+    set({ career: nextCareer, hallOfFame: nextHall, awardsRecap: null });
+    // The trophy room saves on its own; a failed write must not undo the retirement.
+    void hallOfFameStorage.save(nextHall);
+    return { ok: true, entry };
+  },
+
+  loadHallOfFame: async () => {
+    const loaded = await hallOfFameStorage.load();
+    // Merge rather than replace: a retirement made while the load was in flight must survive.
+    set((state) => {
+      const byId = new Map(loaded.map((e) => [e.playerId, e]));
+      for (const e of state.hallOfFame) byId.set(e.playerId, e);
+      return { hallOfFame: [...byId.values()] };
+    });
+  },
+
   reset: () => set({ ...initialState }),
 
   saveToSlot: (slot) => {
@@ -663,6 +733,7 @@ function seasonRunCommit(state: GameStoreState, result: AdvanceResult): Partial<
     seasonRun: result.state,
     season,
     career: applySeasonObjectives(career, season, userGames),
+    awardsRecap: buildSeasonRecap(career, season),
     phase: 'playoffs',
   };
 }
@@ -689,7 +760,34 @@ function playoffsRunCommit(
     career: state.career
       ? applyPlayoffOutcome(state.career, playoffs, boxScores, state.career.season)
       : state.career,
+    awardsRecap: state.career ? buildFinalsRecap(state.career, playoffs, boxScores) : null,
   };
+}
+
+/**
+ * Builds the Finals awards recap (Finals MVP ballot over the champion's playoff scorers).
+ * Null when there is no player mode or no playoff points, matching the trophy rule.
+ */
+function buildFinalsRecap(
+  career: CareerState,
+  playoffs: PlayoffResult,
+  boxScores: GameBoxScore[],
+): AwardsRecapPayload | null {
+  const mode = career.playerMode;
+  if (!mode) return null;
+  const pointsByPlayer = new Map<Player['id'], number>();
+  for (const line of boxScores) {
+    pointsByPlayer.set(line.playerId, (pointsByPlayer.get(line.playerId) ?? 0) + line.points);
+  }
+  const roster = career.rosters[playoffs.champion] ?? [];
+  const ballot = buildFinalsMvpBallot({
+    championRosterIds: roster,
+    playoffPointsByPlayer: pointsByPlayer,
+    userPlayerId: mode.playerId,
+  });
+  if (!ballot) return null;
+  const userAwards: RecapAwardKind[] = ballot.winnerId === mode.playerId ? ['finals_mvp'] : [];
+  return { stage: 'finals', season: career.season, entries: [ballot], userAwards };
 }
 
 function payloadOf(s: GameStoreState): CareerPayload {
@@ -706,6 +804,7 @@ function payloadOf(s: GameStoreState): CareerPayload {
     resolvedMoments: s.resolvedMoments,
     seasonRun: s.seasonRun,
     playoffsRun: s.playoffsRun,
+    awardsRecap: s.awardsRecap,
   };
 }
 
@@ -790,6 +889,27 @@ function applySeasonObjectives(
     }),
   };
   return { ...career, playerMode };
+}
+
+/**
+ * Builds the regular-season awards recap for the controlled player. Winners come from the
+ * same `selectSeasonAwards` call the trophies use, so the recap and the trophies agree.
+ * Returns null outside player mode.
+ */
+function buildSeasonRecap(career: CareerState, season: SeasonResult): AwardsRecapPayload | null {
+  const mode = career.playerMode;
+  if (!mode) return null;
+  const teamOf = teamByPlayer(career);
+  const awards = selectSeasonAwards(season.playerSeasons, teamOf, season.standings);
+  const recap = buildAwardsRecap({
+    season: career.season,
+    playerSeasons: season.playerSeasons,
+    teamByPlayer: teamOf,
+    standings: season.standings,
+    userPlayerId: mode.playerId,
+    awards,
+  });
+  return { stage: 'regular_season', season: recap.season, entries: recap.entries, userAwards: recap.userAwards };
 }
 
 /** Player id to team id, from the career's rosters. */

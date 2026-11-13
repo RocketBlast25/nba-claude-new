@@ -670,6 +670,30 @@ td {
   margin: 0.75rem 0;
 }
 
+.awards-ballot {
+  margin: 0.75rem 0;
+}
+
+.awards-ballot h3 {
+  margin: 0 0 0.25rem;
+}
+
+.awards-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.awards-table th,
+.awards-table td {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+}
+
+.awards-user-row {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
 /* ---- Forms and danger zone ---- */
 .setup-form {
   display: flex;
