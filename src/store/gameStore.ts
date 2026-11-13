@@ -5,12 +5,17 @@
  */
 import { create } from 'zustand';
 import type { CareerState, KeyMoment, KeyMomentResult, PlayerCareer, PlayerModeState } from '../sim/career/types';
+import type { GameBoxScore } from '../sim/core/models';
 import {
+  addCareerStats,
   applyCoachTrustDelta,
+  applySeasonAwards,
   createPlayerCareerMode,
   deriveRole,
+  emptyCareerStats,
   nextUnhappySeasons,
   recordTrophy,
+  selectSeasonAwards,
   shouldRequestTrade,
   updateHappiness,
 } from '../sim/career/playerMode';
@@ -208,7 +213,8 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       drawUserMoments(career, g.gameId, seed + career.season + 7 + i).slice(0, 1),
     );
     const scored = applySeasonObjectives(career, season, userGames);
-    const withObjectives = recordChampionship(scored, playoffs, career.season);
+    // The one-shot season has no playoff box scores, so the run's totals are not counted here.
+    const withObjectives = applyPlayoffOutcome(scored, playoffs, [], career.season);
     set({
       season,
       playoffs,
@@ -256,8 +262,9 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     if (!standings) throw new Error('startPlayoffsRun: regular season not finished');
     const run = startPlayoffsRun(career.season, userTeamId, standings, seed + career.season);
     const sim = new Map(teams.map((t) => [t.id, t.sim]));
-    const result = advancePlayoffsRun(run, playoffGameRunner(sim));
-    set({ playoffs: null, ...playoffsRunCommit(get(), result) });
+    const playedLines: GameBoxScore[] = [];
+    const result = advancePlayoffsRun(run, playoffGameRunner(sim, (lines) => playedLines.push(...lines)));
+    set({ playoffs: null, ...playoffsRunCommit(get(), result, playedLines) });
     return result;
   },
 
@@ -265,8 +272,9 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const { playoffsRun, leagueTeams } = get();
     if (!playoffsRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
-    const result = advancePlayoffsRun(playoffsRun, playoffGameRunner(sim));
-    set(playoffsRunCommit(get(), result));
+    const playedLines: GameBoxScore[] = [];
+    const result = advancePlayoffsRun(playoffsRun, playoffGameRunner(sim, (lines) => playedLines.push(...lines)));
+    set(playoffsRunCommit(get(), result, playedLines));
     return result;
   },
 
@@ -274,8 +282,9 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     const { playoffsRun, leagueTeams } = get();
     if (!playoffsRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
-    const result = resumePlayoffsRun(playoffsRun, decision, playoffGameRunner(sim));
-    set(playoffsRunCommit(get(), result));
+    const playedLines: GameBoxScore[] = [];
+    const result = resumePlayoffsRun(playoffsRun, decision, playoffGameRunner(sim, (lines) => playedLines.push(...lines)));
+    set(playoffsRunCommit(get(), result, playedLines));
     return result;
   },
 
@@ -452,6 +461,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       activeObjectives: [],
       pendingOffers: [],
       unhappySeasons: 0,
+      careerStats: emptyCareerStats(),
     };
     const started = withNewObjectives({ ...career, playerMode }, career.season);
     set({ career: started });
@@ -568,13 +578,18 @@ useGameStore.subscribe((state, prev) => {
   writeSlot(localSlotStorage(), 'autosave', buildSave(payloadOf(state)));
 });
 
-/** Plays one playoff game with the series RNG, mirroring the runPlayoffs game in playSeason. */
-function playoffGameRunner(sim: Map<TeamId, SimTeam>) {
+/**
+ * Plays one playoff game with the series RNG, mirroring the runPlayoffs game in
+ * playSeason. `sink`, when given, receives both teams' box scores so the player's
+ * playoff totals can be accumulated.
+ */
+function playoffGameRunner(sim: Map<TeamId, SimTeam>, sink?: (lines: GameBoxScore[]) => void) {
   return (home: TeamId, away: TeamId, gameRng: SeededRng): boolean => {
     const h = sim.get(home);
     const a = sim.get(away);
     if (!h || !a) throw new Error('playoffs: unknown playoff team');
     const result = simulateGame(makeId<'game'>(`po-${home}-${away}`) as GameId, h, a, gameRng);
+    sink?.([...result.home.boxScores, ...result.away.boxScores]);
     return result.home.points > result.away.points;
   };
 }
@@ -588,6 +603,8 @@ function seasonRunCommit(state: GameStoreState, result: AdvanceResult): Partial<
   if (result.status !== 'finished') return { seasonRun: result.state };
   const { career, leagueTeams } = state;
   if (!career || !leagueTeams) return { seasonRun: result.state };
+  // A run that was already committed (finished before this call) must not score twice.
+  if (state.seasonRun?.standings) return { seasonRun: result.state };
   const season = seasonResultFromRun(result.state, leagueTeams);
   const userGames = season.gameBoxScores.filter((g) => userPlaysIn(career, g));
   return {
@@ -599,22 +616,27 @@ function seasonRunCommit(state: GameStoreState, result: AdvanceResult): Partial<
 }
 
 /**
- * Applies a playoff run's result. A finished run commits the bracket (champion,
- * runner-up, rounds) and records the controlled player's championship trophy when
- * their team won it.
+ * Applies a playoff run's result. Box scores from this call are appended to the run, so
+ * the player's playoff totals survive a save. A run that finishes commits the bracket
+ * (champion, runner-up, rounds), the player's playoff totals and any trophy earned.
  */
 function playoffsRunCommit(
   state: GameStoreState,
   result: PlayoffAdvanceResult,
+  playedLines: GameBoxScore[],
 ): Partial<GameStoreState> {
+  const boxScores = [...(state.playoffsRun?.boxScores ?? []), ...playedLines];
+  const run = { ...result.state, boxScores };
+  // A run that was already finished (and committed) must not score the player twice.
+  if (state.playoffsRun?.result) return { playoffsRun: run, playoffs: state.playoffs };
   const playoffs = result.status === 'finished' ? result.result : result.state.result;
+  if (!playoffs) return { playoffsRun: run, playoffs: state.playoffs };
   return {
-    playoffsRun: result.state,
-    playoffs: playoffs ?? state.playoffs,
-    career:
-      playoffs && state.career
-        ? recordChampionship(state.career, playoffs, state.career.season)
-        : state.career,
+    playoffsRun: run,
+    playoffs,
+    career: state.career
+      ? applyPlayoffOutcome(state.career, playoffs, boxScores, state.career.season)
+      : state.career,
   };
 }
 
@@ -697,15 +719,45 @@ function applySeasonObjectives(
   const role = playerRoleOn(career, mode.playerId);
   const teamWinPct = wins + losses === 0 ? 0.5 : wins / (wins + losses);
   const happy = updateHappiness(trusted, { role, teamWinPct });
-  return {
-    ...career,
-    playerMode: {
-      ...mode,
-      ...happy,
-      unhappySeasons: nextUnhappySeasons(mode.unhappySeasons, happy.happiness),
-      activeObjectives: [],
-    },
+  // Season awards come from league-wide averages, then the season's totals accumulate.
+  const awards = selectSeasonAwards(season.playerSeasons, teamByPlayer(career), season.standings);
+  const awarded = applySeasonAwards(happy, {
+    season: career.season,
+    teamId: career.userTeamId,
+    playerId: mode.playerId,
+    awards,
+  });
+  const playerMode: PlayerModeState = {
+    ...mode,
+    ...awarded,
+    unhappySeasons: nextUnhappySeasons(mode.unhappySeasons, happy.happiness),
+    activeObjectives: [],
+    careerStats: addCareerStats(awarded.careerStats ?? emptyCareerStats(), {
+      gamesPlayed: lines.length,
+      points: sumBy(lines, (l) => l.points),
+      rebounds: sumBy(lines, (l) => l.rebounds),
+      assists: sumBy(lines, (l) => l.assists),
+      steals: sumBy(lines, (l) => l.steals),
+      blocks: sumBy(lines, (l) => l.blocks),
+    }),
   };
+  return { ...career, playerMode };
+}
+
+/** Player id to team id, from the career's rosters. */
+function teamByPlayer(career: CareerState): Map<Player['id'], TeamId> {
+  const out = new Map<Player['id'], TeamId>();
+  for (const [teamId, ids] of Object.entries(career.rosters) as [TeamId, Player['id'][]][]) {
+    for (const id of ids) out.set(id, teamId);
+  }
+  return out;
+}
+
+/** Sums a field across box-score lines. */
+function sumBy(lines: GameBoxScore[], pick: (line: GameBoxScore) => number): number {
+  let total = 0;
+  for (const line of lines) total += pick(line);
+  return total;
 }
 
 /** Assigns the controlled player's objectives for a new season. */
@@ -732,14 +784,50 @@ function withPlayerOffers(career: CareerState, rng: SeededRng): CareerState {
   return { ...career, playerMode: { ...mode, pendingOffers: offers } };
 }
 
-/** Records a championship trophy for the controlled player when the user's team wins. */
-function recordChampionship(career: CareerState, playoffs: PlayoffResult, season: number): CareerState {
+/**
+ * Commits a finished playoff run for the controlled player: the championship and
+ * Finals MVP trophies, a Finals appearance, and the playoff totals from the run's box
+ * scores. The Finals MVP goes to the champion's leading playoff scorer.
+ */
+function applyPlayoffOutcome(
+  career: CareerState,
+  playoffs: PlayoffResult,
+  boxScores: GameBoxScore[],
+  season: number,
+): CareerState {
   const mode = career.playerMode;
-  if (!mode || playoffs.champion !== career.userTeamId) return career;
-  return {
-    ...career,
-    playerMode: { ...mode, ...recordTrophy(mode, { kind: 'championship', season, teamId: career.userTeamId }) },
+  if (!mode) return career;
+  const { userTeamId } = career;
+  const isChampion = playoffs.champion === userTeamId;
+  const reachedFinals = isChampion || playoffs.runnerUp === userTeamId;
+  const lines = boxScores.filter((l) => l.playerId === mode.playerId);
+  const playerPoints = sumBy(lines, (l) => l.points);
+
+  // recordTrophy spreads the mode it is given, so the player-mode fields survive the cast.
+  let next: PlayerModeState = mode;
+  if (isChampion) {
+    next = recordTrophy(next, { kind: 'championship', season, teamId: userTeamId }) as PlayerModeState;
+    const teamTotals = new Map<Player['id'], number>();
+    for (const line of boxScores) {
+      if (!(career.rosters[userTeamId] ?? []).includes(line.playerId)) continue;
+      teamTotals.set(line.playerId, (teamTotals.get(line.playerId) ?? 0) + line.points);
+    }
+    const teamBest = Math.max(0, ...teamTotals.values());
+    if (playerPoints > 0 && playerPoints >= teamBest) {
+      next = recordTrophy(next, { kind: 'finals_mvp', season, teamId: userTeamId }) as PlayerModeState;
+    }
+  }
+
+  const playerMode: PlayerModeState = {
+    ...mode,
+    ...next,
+    careerStats: addCareerStats(next.careerStats ?? emptyCareerStats(), {
+      playoffGames: lines.length,
+      playoffPoints: playerPoints,
+      finalsAppearances: reachedFinals ? 1 : 0,
+    }),
   };
+  return { ...career, playerMode };
 }
 
 /** Role from the player's overall rank on the user's roster. */

@@ -289,6 +289,11 @@ export interface PlayoffsRunState {
   standingsRecord: Record<TeamId, number>;
   /** Set once the playoffs finish. */
   result: PlayoffResult | null;
+  /**
+   * Box scores for every game played so far, appended by the caller that owns the game
+   * runner. Optional and absent on older saves; used for the player's playoff totals.
+   */
+  boxScores?: GameBoxScore[];
 }
 
 export type PlayoffAdvanceResult =
@@ -589,6 +594,7 @@ export function startPlayoffsRun(
     pending: null,
     resolved: [],
     result: null,
+    boxScores: [],
   };
 }
 

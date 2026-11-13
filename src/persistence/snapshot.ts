@@ -4,6 +4,7 @@
  * builds, serializes and validates plain JSON-safe snapshots.
  */
 import type { CareerState } from '../sim/career/types';
+import { emptyCareerStats, type CareerStats } from '../sim/career/playerMode';
 import type { KeyMoment, KeyMomentResult } from '../sim/career/types';
 import type { DraftPick } from '../sim/league/draft';
 import type { PlayoffResult } from '../sim/league/playoffs';
@@ -56,8 +57,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Upgrades cumulative career stats. Saves written before Milestone 11 have no
+ * careerStats, and a partial or malformed record fills in zeros rather than failing to
+ * load: the player keeps playing with totals from this point on.
+ */
+export function normalizeCareerStats(value: unknown): CareerStats {
+  const base = emptyCareerStats();
+  if (!isRecord(value)) return base;
+  const out = { ...base };
+  for (const key of Object.keys(base) as (keyof CareerStats)[]) {
+    const n = value[key];
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) out[key] = n;
+  }
+  return out;
+}
+
+/**
  * Parses and validates a save. Rejects unknown versions and structurally wrong data
- * so a bad file can never half-apply to the store.
+ * so a bad file can never half-apply to the store. Fields added after a save was
+ * written are normalized to their defaults, so older saves still load.
  */
 export function parseSave(text: string): ParseResult {
   let raw: unknown;
@@ -110,5 +128,12 @@ export function parseSave(text: string): ParseResult {
       return { ok: false, error: 'Save has an invalid player mode.' };
     }
   }
-  return { ok: true, save: raw as unknown as CareerSave };
+  const save = raw as unknown as CareerSave;
+  if (save.payload.career?.playerMode) {
+    save.payload.career.playerMode = {
+      ...save.payload.career.playerMode,
+      careerStats: normalizeCareerStats(save.payload.career.playerMode.careerStats),
+    };
+  }
+  return { ok: true, save };
 }
