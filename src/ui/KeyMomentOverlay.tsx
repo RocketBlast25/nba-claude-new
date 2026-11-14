@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ACTION_IDS, ACTION_RULES, decisionCards, type ActionId } from '../possession/decision';
+import type { CourtSnapshot } from '../possession/replay';
+import type { TeamId } from '../sim/core/types';
 import { createRoll } from './keyMomentRoll';
+import { CourtReplay, type CourtRoles } from './CourtReplay';
 import type { UserDecision } from '../sim/season/resumableSeason';
 import { useGameStore } from '../store/gameStore';
 import { currentPlayoffsRun, currentSeasonRun, snapshotOf, teamLabel } from './careerViewModel';
@@ -9,6 +12,8 @@ interface Roll {
   actionId: ActionId;
   success: boolean;
   reward: number;
+  frames: CourtSnapshot[];
+  roles: CourtRoles;
 }
 
 /**
@@ -59,10 +64,30 @@ export function KeyMomentOverlay() {
 
   const chances = decisionCards(player.attributes);
   const rollSeed = seed + career.season + moment.gameIndex;
+  const playersOf = (teamId: TeamId) =>
+    (career.rosters[teamId] ?? [])
+      .map((id) => career.players.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => p !== undefined && p.id !== player.id);
+  const userTeamId = career.userTeamId;
+  const opponentId: TeamId = moment.homeId === userTeamId ? moment.awayId : moment.homeId;
 
   const choose = (actionId: ActionId) => {
-    const result = createRoll(actionId, player.attributes, rollSeed);
-    setRoll({ actionId, ...result });
+    const run = createRoll({
+      actor: player,
+      offense: playersOf(userTeamId),
+      defense: playersOf(opponentId),
+      offenseTeamId: userTeamId,
+      defenseTeamId: opponentId,
+      actionId,
+      seed: rollSeed,
+    });
+    setRoll({
+      actionId,
+      success: run.outcome.success,
+      reward: run.outcome.reward,
+      frames: run.frames,
+      roles: { offenseIds: run.offenseIds, defenseIds: run.defenseIds, actorId: run.actorId },
+    });
   };
 
   const continueRun = (decision: UserDecision) => {
@@ -111,6 +136,7 @@ export function KeyMomentOverlay() {
 
         {roll ? (
           <div className="key-moment-result">
+            <CourtReplay frames={roll.frames} roles={roll.roles} autoPlay />
             <p role="status">
               <strong>{ACTION_RULES[roll.actionId].name}</strong>: {roll.success ? 'Success' : 'Turnover'}
               {roll.success ? ` (+${roll.reward})` : ''}

@@ -99,6 +99,26 @@ describe('career UI', () => {
     expect(within(dialog).getByRole('group', { name: 'Choose an action' })).toBeTruthy();
   });
 
+  it('renders the court replay with autoplay once the user picks an action', () => {
+    const league = buildLeague(11);
+    const career = careerFrom(league);
+    const store = useGameStore.getState();
+    store.startCareer({ career, userTeamId: career.userTeamId, seed: 11, leagueTeams: league });
+    const player = (career.rosters[career.userTeamId] ?? [])
+      .map((id) => career.players.find((p) => p.id === id)!)
+      .sort((a, b) => b.overall - a.overall)[0]!;
+    expect(store.startPlayerCareer(player.id)).toEqual({ ok: true });
+    store.startSeasonRun(league);
+
+    render(createElement(App));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByRole('img', { name: /Court replay/ })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Drive/ }));
+    expect(within(dialog).getByRole('img', { name: /Court replay/ })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Pause' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Replay' })).toBeTruthy();
+  });
+
   it('renders the overlay standalone without pending moments as nothing', () => {
     render(createElement(KeyMomentOverlay));
     expect(screen.queryByRole('dialog')).toBeNull();

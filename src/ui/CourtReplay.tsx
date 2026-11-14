@@ -2,14 +2,33 @@ import { useEffect, useRef, useState } from 'react';
 import type { CourtSnapshot } from '../possession/replay';
 import { COURT_WIDTH, COURT_HEIGHT } from '../possession/types';
 
+/** Which side a player is on, and whether it is the user's controlled player. */
+export interface CourtRoles {
+  /** Ids of the user's offense, with the user's player first. */
+  offenseIds: string[];
+  /** Ids of the defenders. */
+  defenseIds: string[];
+  /** The user's player, drawn with its own colour. */
+  actorId: string;
+}
+
 /**
  * Top-down Canvas 2D replay of court snapshots. Draws the frame at the scrub
  * position; play advances through frames on a timer. Holds no simulation state.
+ * With `autoPlay`, playback starts on mount and stops on the last frame.
  */
-export function CourtReplay({ frames }: { frames: CourtSnapshot[] }) {
+export function CourtReplay({
+  frames,
+  roles,
+  autoPlay = false,
+}: {
+  frames: CourtSnapshot[];
+  roles?: CourtRoles;
+  autoPlay?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = useState(autoPlay);
   const last = Math.max(0, frames.length - 1);
 
   useEffect(() => {
@@ -31,8 +50,8 @@ export function CourtReplay({ frames }: { frames: CourtSnapshot[] }) {
     const ctx = canvas?.getContext('2d');
     const frame = frames[index];
     if (!canvas || !ctx || !frame) return;
-    drawCourt(ctx, frame);
-  }, [frames, index]);
+    drawCourt(ctx, frame, roles);
+  }, [frames, index, roles]);
 
   if (frames.length === 0) return <p>No replay available.</p>;
 
@@ -50,6 +69,15 @@ export function CourtReplay({ frames }: { frames: CourtSnapshot[] }) {
         <button type="button" onClick={() => setPlaying((p) => !p)}>
           {playing ? 'Pause' : 'Play'}
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIndex(0);
+            setPlaying(true);
+          }}
+        >
+          Replay
+        </button>
         <input
           type="range"
           min={0}
@@ -66,7 +94,15 @@ export function CourtReplay({ frames }: { frames: CourtSnapshot[] }) {
   );
 }
 
-function drawCourt(ctx: CanvasRenderingContext2D, frame: CourtSnapshot): void {
+const COLOR = {
+  user: '#ffd166',
+  offense: '#7fb3ff',
+  defense: '#ef6f6c',
+  unknown: '#9aa5b1',
+  ball: '#ffb347',
+};
+
+function drawCourt(ctx: CanvasRenderingContext2D, frame: CourtSnapshot, roles?: CourtRoles): void {
   ctx.clearRect(0, 0, COURT_WIDTH, COURT_HEIGHT);
   ctx.fillStyle = '#1b2a3a';
   ctx.fillRect(0, 0, COURT_WIDTH, COURT_HEIGHT);
@@ -75,12 +111,20 @@ function drawCourt(ctx: CanvasRenderingContext2D, frame: CourtSnapshot): void {
   ctx.strokeRect(1, 1, COURT_WIDTH - 2, COURT_HEIGHT - 2);
   for (const p of frame.players) {
     ctx.beginPath();
-    ctx.fillStyle = '#7fb3ff';
+    ctx.fillStyle = colorFor(p.id, roles);
     ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.beginPath();
-  ctx.fillStyle = '#ffb347';
+  ctx.fillStyle = COLOR.ball;
   ctx.arc(frame.ballPos.x, frame.ballPos.y, 6, 0, Math.PI * 2);
   ctx.fill();
+}
+
+function colorFor(id: string, roles?: CourtRoles): string {
+  if (!roles) return COLOR.unknown;
+  if (id === roles.actorId) return COLOR.user;
+  if (roles.offenseIds.includes(id)) return COLOR.offense;
+  if (roles.defenseIds.includes(id)) return COLOR.defense;
+  return COLOR.unknown;
 }

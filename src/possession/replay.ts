@@ -5,7 +5,7 @@ export interface CourtSnapshot {
   /** Simulation time in milliseconds. */
   t: number;
   ballPos: { x: number; y: number };
-  players: { id: string; x: number; y: number }[];
+  players: { id: string; teamId: string | null; x: number; y: number }[];
 }
 
 const round = (n: number): number => Math.round(n * 100) / 100;
@@ -22,7 +22,12 @@ export function snapshotCourt(state: PossessionState): CourtSnapshot {
   const ball = state.entities.find((e) => e.id === 'ball');
   const players = state.entities
     .filter((e: CourtEntity) => e.id !== 'ball')
-    .map((e) => ({ id: String(e.id), x: clampToCourt(e.x, COURT_WIDTH), y: clampToCourt(e.y, COURT_HEIGHT) }));
+    .map((e) => ({
+      id: String(e.id),
+      teamId: e.teamId,
+      x: clampToCourt(e.x, COURT_WIDTH),
+      y: clampToCourt(e.y, COURT_HEIGHT),
+    }));
   return {
     t: round(state.timeMs),
     ballPos: ball
