@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import type { Attributes, Badge, Player, Position } from '../sim/core/models';
+import type { Attributes, AttributeKey, Badge, Player, Position } from '../sim/core/models';
+import { overallOf } from '../sim/league/roster';
 import type { PlayerId } from '../sim/core/types';
 import type { CareerState } from '../sim/career/types';
 import type { SeasonObjective } from '../sim/career/keyMomentTriggers';
@@ -8,6 +9,14 @@ import { deriveRole, emptyCareerStats } from '../sim/career/playerMode';
 import { rankAgainstGoats, userGoatProfile } from '../sim/career/goatRanking';
 import { buildTaleOfTheTape, nextMilestone } from '../sim/career/goatCompare';
 import { legendById } from '../sim/career/goatCatalog';
+import {
+  SKILL_CATEGORIES,
+  SKILL_CATEGORY_ORDER,
+  attributeCap,
+  upgradeCost,
+  type SkillCategory,
+  type TrainingFocus,
+} from '../sim/career/skillPoints';
 import { useGameStore } from '../store/gameStore';
 import {
   ROLE_LABELS,
@@ -61,6 +70,7 @@ export function MyCareerPanel({
   onNavigate,
 }: MyCareerPanelProps) {
   const career = useGameStore((s) => s.career);
+  const phase = useGameStore((s) => s.phase);
   const [section, setSection] = useState<Section>('Overview');
   const [compareId, setCompareId] = useState<string | null>(null);
 
@@ -197,6 +207,12 @@ export function MyCareerPanel({
       {section === 'Attributes' ? (
         <section className="panel" aria-label="Attribute progression">
           <h2>Attributes</h2>
+          <SkillPointsPanel
+            player={player}
+            skillPoints={career.playerMode?.skillPoints ?? 0}
+            trainingFocus={career.playerMode?.trainingFocus ?? null}
+            offseason={phase === 'offseason'}
+          />
           <div className="grid-2">
             {groups.map((group) => (
               <div key={group.name}>
@@ -505,6 +521,99 @@ function CareerSetup({ career }: { career: CareerState }) {
         {error ? <p role="alert">{error}</p> : null}
       </form>
     </section>
+  );
+}
+
+const SKILL_LABELS: Record<SkillCategory, string> = {
+  finishing: 'Finishing',
+  shooting: 'Shooting',
+  playmaking: 'Playmaking',
+  perimeter_defense: 'Perimeter Defense',
+  interior_defense: 'Interior Defense',
+  athleticism: 'Athleticism',
+};
+
+/**
+ * Skill point balance, one "+" per attribute category, and the offseason training focus.
+ * Upgrades use the store's spend action, which applies the sim's cost and cap rules.
+ */
+function SkillPointsPanel({
+  player,
+  skillPoints,
+  trainingFocus,
+  offseason,
+}: {
+  player: Player;
+  skillPoints: number;
+  trainingFocus: TrainingFocus;
+  offseason: boolean;
+}) {
+  const spendSkillPoint = useGameStore((s) => s.spendSkillPoint);
+  const setTrainingFocus = useGameStore((s) => s.setTrainingFocus);
+  const [message, setMessage] = useState<string | null>(null);
+  const overall = overallOf(player.attributes);
+  const cap = attributeCap(overall);
+
+  return (
+    <div className="skill-points" aria-label="Skill points">
+      <p>
+        <strong>Skill points:</strong> {skillPoints} · Overall cap {cap}
+      </p>
+      <table className="stat-table">
+        <tbody>
+          {SKILL_CATEGORY_ORDER.map((category) => {
+            // "+" raises the weakest attribute in the category; ties keep the listed order.
+            const attr = SKILL_CATEGORIES[category].reduce((low, a) =>
+              player.attributes[a] < player.attributes[low] ? a : low,
+            ) as AttributeKey;
+            const current = player.attributes[attr];
+            const cost = upgradeCost(current);
+            return (
+              <tr key={category}>
+                <th scope="row">{SKILL_LABELS[category]}</th>
+                <td className="num">
+                  {SKILL_CATEGORIES[category].map((a) => player.attributes[a]).join(' / ')}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="secondary"
+                    aria-label={`Upgrade ${SKILL_LABELS[category]} for ${cost} SP`}
+                    disabled={skillPoints < cost || current >= cap}
+                    onClick={() => {
+                      const result = spendSkillPoint(attr);
+                      setMessage(result.ok ? null : result.reason);
+                    }}
+                  >
+                    + ({cost} SP)
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {message ? <p role="alert">{message}</p> : null}
+      {offseason ? (
+        <label>
+          Offseason training focus{' '}
+          <select
+            aria-label="Offseason training focus"
+            value={trainingFocus ?? ''}
+            onChange={(e) =>
+              setTrainingFocus(e.target.value === '' ? null : (e.target.value as SkillCategory))
+            }
+          >
+            <option value="">None</option>
+            {SKILL_CATEGORY_ORDER.map((category) => (
+              <option key={category} value={category}>
+                {SKILL_LABELS[category]}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+    </div>
   );
 }
 

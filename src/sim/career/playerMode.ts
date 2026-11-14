@@ -4,6 +4,7 @@ import type { PlayerSeasonLine } from '../league/playerSeason';
 import type { StandingRow } from '../league/standings';
 import { winPct } from '../league/standings';
 import { PLAYER_MODE_CONFIG } from './playerModeConfig';
+import type { TrainingFocus } from './skillPoints';
 
 /** Role on the user's team, derived from roster rank and overall (never stored). */
 export type PlayerRole = 'bench' | 'sixth_man' | 'starter' | 'franchise';
@@ -86,6 +87,10 @@ export interface PlayerCareerMode {
   trophies: Trophy[];
   /** Lifetime totals across every completed season. */
   careerStats: CareerStats;
+  /** Unspent skill points. Absent on older saves (treated as 0). */
+  skillPoints?: number;
+  /** Offseason training focus chosen for the next season. Absent or null means none. */
+  trainingFocus?: TrainingFocus | null;
 }
 
 export interface RoleInput {

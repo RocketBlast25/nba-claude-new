@@ -145,6 +145,9 @@ export function parseSave(text: string): ParseResult {
     save.payload.career.playerMode = {
       ...save.payload.career.playerMode,
       careerStats: normalizeCareerStats(save.payload.career.playerMode.careerStats),
+      // Saves made before skill points existed load with a zero balance and no focus.
+      skillPoints: save.payload.career.playerMode.skillPoints ?? 0,
+      trainingFocus: save.payload.career.playerMode.trainingFocus ?? null,
     };
   }
   return { ok: true, save };

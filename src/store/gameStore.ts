@@ -34,7 +34,16 @@ import {
 import { resolveMoment, selectMoments } from '../sim/career/keyMoments';
 import { createCustomPlayer, type ArchetypeId } from '../sim/career/customPlayer';
 import { createNewCareer, NEW_CAREER_TEAMS, type NewCareerOptions } from '../sim/career/newCareer';
-import type { Player, Position } from '../sim/core/models';
+import type { AttributeKey, Player, Position } from '../sim/core/models';
+import { overallOf } from '../sim/league/roster';
+import {
+  applyTrainingFocus,
+  awardSkillPoints,
+  objectiveSkillPoints,
+  playoffSkillPoints,
+  spendOnAttribute,
+  type TrainingFocus,
+} from '../sim/career/skillPoints';
 import { checkRotation } from '../sim/league/rotation';
 import { LEAGUE_CONFIG } from '../sim/league/leagueConfig';
 import { checkTrade } from '../sim/league/trade';
@@ -153,6 +162,10 @@ export interface GameStoreActions {
   resolveNextMoment: (actionId: ActionId) => KeyMomentResult | null;
   /** Runs the offseason: retirements, contracts, draft, free agency and roster top-up. */
   runOffseason: () => void;
+  /** Spends skill points to raise one attribute of the controlled player by one point. */
+  spendSkillPoint: (attr: AttributeKey) => { ok: true } | { ok: false; reason: string };
+  /** Sets the offseason training focus for the controlled player (null clears it). */
+  setTrainingFocus: (focus: TrainingFocus) => void;
   /** Sets the user team's rotation after validating it against the roster. */
   setUserRotation: (playerIds: Player['id'][]) => { ok: true } | { ok: false; reason: string };
   /** Trades players between the user team and another team after the salary-matching check. */
@@ -438,7 +451,10 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       playoffs.exitOrder,
       rng.fork(),
     );
-    const withOffers = withPlayerOffers(withNewObjectives(next, career.season + 1), rng.fork());
+    const withOffers = withPlayerOffers(
+      withNewObjectives(withTrainingFocus(next), career.season + 1),
+      rng.fork(),
+    );
     // The next season's run starts from scratch; the completed season's results stay
     // visible until then, and startSeasonRun clears them when the new season begins.
     set({
@@ -451,6 +467,34 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   },
 
   setPhase: (phase) => set({ phase }),
+
+  spendSkillPoint: (attr) => {
+    const { career } = get();
+    const mode = career?.playerMode;
+    if (!career || !mode) return { ok: false, reason: 'No player career' };
+    const player = career.players.find((p) => p.id === mode.playerId);
+    if (!player) return { ok: false, reason: 'Player not found' };
+    const overall = overallOf(player.attributes);
+    const result = spendOnAttribute(player.attributes, mode.skillPoints ?? 0, overall, attr);
+    if (!result.ok) return { ok: false, reason: result.reason ?? 'Cannot upgrade' };
+    const players = career.players.map((p) =>
+      p.id === player.id ? { ...p, attributes: result.attributes } : p,
+    );
+    set({
+      career: {
+        ...career,
+        players,
+        playerMode: { ...mode, skillPoints: result.skillPoints },
+      },
+    });
+    return { ok: true };
+  },
+
+  setTrainingFocus: (focus) => {
+    const { career } = get();
+    if (!career?.playerMode) return;
+    set({ career: { ...career, playerMode: { ...career.playerMode, trainingFocus: focus } } });
+  },
 
   startNewCareer: (options) => {
     if (options.playerName.trim().length === 0) return { ok: false, reason: 'Enter a player name' };
@@ -513,6 +557,8 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       pendingOffers: [],
       unhappySeasons: 0,
       careerStats: emptyCareerStats(),
+      skillPoints: 0,
+      trainingFocus: null,
     };
     const started = withNewObjectives({ ...career, playerMode }, career.season);
     set({ career: started });
@@ -691,6 +737,20 @@ useGameStore.subscribe((state, prev) => {
     if (current.career) void writeAutosave(payloadOf(current));
   }, AUTOSAVE_DEBOUNCE_MS);
 });
+
+/**
+ * Flushes a pending autosave when the page is hidden or closed, so the last debounce window
+ * is written instead of being lost with the tab.
+ */
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (autosaveTimer === null) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    const current = useGameStore.getState();
+    if (current.career) void writeAutosave(payloadOf(current));
+  });
+}
 
 /** Writes the autosave slot and records the outcome for the shell's indicator. */
 async function writeAutosave(payload: CareerPayload): Promise<void> {
@@ -874,9 +934,17 @@ function applySeasonObjectives(
     playerId: mode.playerId,
     awards,
   });
+  const earnedSp =
+    objectiveSkillPoints(evaluation.met.length) +
+    awardSkillPoints({
+      mvp: awards.mvp === mode.playerId,
+      dpoy: awards.dpoy === mode.playerId,
+      allNba: awards.allNba.includes(mode.playerId),
+    });
   const playerMode: PlayerModeState = {
     ...mode,
     ...awarded,
+    skillPoints: (mode.skillPoints ?? 0) + earnedSp,
     unhappySeasons: nextUnhappySeasons(mode.unhappySeasons, happy.happiness),
     activeObjectives: [],
     careerStats: addCareerStats(awarded.careerStats ?? emptyCareerStats(), {
@@ -986,9 +1054,12 @@ function applyPlayoffOutcome(
     }
   }
 
+  // A playoff round counts as won when the user's team wins its series in that round.
+  const roundsWon = playoffs.rounds.flat().filter((s) => s.winner === userTeamId).length;
   const playerMode: PlayerModeState = {
     ...mode,
     ...next,
+    skillPoints: (mode.skillPoints ?? 0) + playoffSkillPoints(roundsWon, isChampion),
     careerStats: addCareerStats(next.careerStats ?? emptyCareerStats(), {
       playoffGames: lines.length,
       playoffPoints: playerPoints,
@@ -996,6 +1067,24 @@ function applyPlayoffOutcome(
     }),
   };
   return { ...career, playerMode };
+}
+
+/**
+ * Applies the offseason training focus to the controlled player's attributes, then clears it
+ * so the focus only covers one offseason. Other players and the rest of the career are unchanged.
+ */
+function withTrainingFocus(career: CareerState): CareerState {
+  const mode = career.playerMode;
+  if (!mode || !mode.trainingFocus) return career;
+  const players = career.players.map((p) =>
+    p.id === mode.playerId
+      ? {
+          ...p,
+          attributes: applyTrainingFocus(p.attributes, overallOf(p.attributes), mode.trainingFocus ?? null),
+        }
+      : p,
+  );
+  return { ...career, players, playerMode: { ...mode, trainingFocus: null } };
 }
 
 /** Role from the player's overall rank on the user's roster. */
