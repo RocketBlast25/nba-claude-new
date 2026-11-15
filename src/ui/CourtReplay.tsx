@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CourtSnapshot } from '../possession/replay';
 import { COURT_WIDTH, COURT_HEIGHT } from '../possession/types';
+import { RELEASE_FRAME } from '../possession/keyMomentCourt';
 import type { Position } from '../sim/core/models';
 
 /** Which side a player is on, and whether it is the user's controlled player. */
@@ -142,6 +143,14 @@ function interpolate(frames: CourtSnapshot[], progress: number): { ball: Point; 
   return { ball: lerp(a.ballPos, b.ballPos), players };
 }
 
+/**
+ * Where the ball left the carrier: the ball's position at the release keyframe, i.e.
+ * the shooter's or passer's coordinates at release, not the possession's start.
+ */
+function releaseOrigin(frames: CourtSnapshot[]): Point | undefined {
+  return frames[RELEASE_FRAME]?.ballPos;
+}
+
 function drawCourt(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progress: number, roles?: CourtRoles): void {
   const { ball, players } = interpolate(frames, progress);
   ctx.clearRect(0, 0, COURT_WIDTH, COURT_HEIGHT);
@@ -152,8 +161,8 @@ function drawCourt(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progr
   ctx.strokeRect(1, 1, COURT_WIDTH - 2, COURT_HEIGHT - 2);
   drawMarkings(ctx);
 
-  // Subtle dashed arc from the ball's first keyframe to where it is now: the shot or pass line.
-  const start = frames[0]?.ballPos;
+  // Dashed arc from the release point (the ball's last keyframe on the carrier) to where it is now.
+  const start = releaseOrigin(frames);
   if (start) {
     ctx.save();
     ctx.setLineDash([6, 6]);

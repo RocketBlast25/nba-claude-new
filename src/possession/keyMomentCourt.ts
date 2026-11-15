@@ -21,7 +21,7 @@ const HOOP_LEFT = { x: 52.5, y: 250 };
 const HOOP_RIGHT = { x: 887.5, y: 250 };
 
 /** Keyframe where the ball leaves the carrier; the last keyframes fly the arc. */
-const RELEASE_FRAME = FRAME_COUNT - 4;
+export const RELEASE_FRAME = FRAME_COUNT - 4;
 /** Peak sideways offset of the ball path, in court units. */
 const ARC_BULGE = 24;
 /** Height of each dribble bounce, in court units. */
