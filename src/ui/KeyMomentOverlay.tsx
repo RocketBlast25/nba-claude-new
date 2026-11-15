@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ACTION_IDS, ACTION_RULES, decisionCards, type ActionId } from '../possession/decision';
+import { ACTION_RULES, decisionCards, type ActionId } from '../possession/decision';
 import type { CourtSnapshot } from '../possession/replay';
 import type { TeamId } from '../sim/core/types';
 import { createRoll } from './keyMomentRoll';
+import { selectScenario, type ScenarioPlay } from '../possession/scenarios';
+import { SeededRng } from '../sim/core/random';
 import { CourtReplay, type CourtRoles } from './CourtReplay';
 import type { UserDecision } from '../sim/season/resumableSeason';
 import { useGameStore } from '../store/gameStore';
@@ -64,6 +66,15 @@ export function KeyMomentOverlay() {
 
   const chances = decisionCards(player.attributes);
   const rollSeed = seed + career.season + moment.gameIndex;
+  const scenarioRng = new SeededRng(rollSeed);
+  const scenario = selectScenario(
+    {
+      margin: 'homePoints' in moment ? Math.abs(moment.homePoints - moment.awayPoints) : 0,
+      quarter: moment.trigger === 'clutch_fourth' || moment.trigger === 'game_winner' ? 4 : 2,
+      overtimes: 0,
+    },
+    scenarioRng,
+  );
   const playersOf = (teamId: TeamId) =>
     (career.rosters[teamId] ?? [])
       .map((id) => career.players.find((p) => p.id === id))
@@ -71,7 +82,8 @@ export function KeyMomentOverlay() {
   const userTeamId = career.userTeamId;
   const opponentId: TeamId = moment.homeId === userTeamId ? moment.awayId : moment.homeId;
 
-  const choose = (actionId: ActionId) => {
+  const choose = (play: ScenarioPlay) => {
+    const actionId = play.actionId;
     const run = createRoll({
       actor: player,
       offense: playersOf(userTeamId),
@@ -79,6 +91,7 @@ export function KeyMomentOverlay() {
       offenseTeamId: userTeamId,
       defenseTeamId: opponentId,
       actionId,
+      modifier: play.modifier,
       seed: rollSeed,
     });
     const labels: NonNullable<CourtRoles['labels']> = {};
@@ -155,19 +168,25 @@ export function KeyMomentOverlay() {
             </button>
           </div>
         ) : (
-          <div role="group" aria-label="Choose an action" className="action-grid">
-            {ACTION_IDS.map((id, i) => (
-              <button
-                key={id}
-                type="button"
-                className="action-card"
-                onClick={() => choose(id)}
-                ref={i === 0 ? firstButtonRef : undefined}
-              >
-                <span className="action-name">{ACTION_RULES[id].name}</span>
-                <span className="action-chance">{Math.round(chances[id] * 100)}% success</span>
-              </button>
-            ))}
+          <div>
+            <p className="eyebrow">{scenario.title}</p>
+            <div role="group" aria-label="Choose an action" className="action-grid">
+              {scenario.plays.map((play, i) => (
+                <button
+                  key={play.label}
+                  type="button"
+                  className="action-card"
+                  onClick={() => choose(play)}
+                  ref={i === 0 ? firstButtonRef : undefined}
+                >
+                  <span className="action-name">{play.label}</span>
+                  <span className="muted">{play.description}</span>
+                  <span className="action-chance">
+                    {Math.round(Math.min(1, chances[play.actionId] * play.modifier.multiplier + play.modifier.bonus) * 100)}% success · {play.riskReward}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>

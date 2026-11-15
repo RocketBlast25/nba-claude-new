@@ -26,6 +26,8 @@ export interface ReleaseContext {
   pass?: { receiver: Vec; style: PassStyle };
   /** Players who can scramble for a miss, with their side and rebounding rating. */
   reboundCandidates: ReboundCandidate[];
+  /** Situational scenario modifier; omitted means no change. */
+  modifier?: { multiplier: number; bonus: number };
 }
 
 /**
@@ -63,6 +65,10 @@ export function resolvePlay(
     chance = playShotChance(base, contest);
   } else {
     chance = base;
+  }
+
+  if (ctx.modifier) {
+    chance = Math.max(0, Math.min(1, chance * ctx.modifier.multiplier + ctx.modifier.bonus));
   }
 
   const success = rng.chance(chance);

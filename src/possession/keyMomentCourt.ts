@@ -153,6 +153,8 @@ export interface KeyMomentCourtInput {
   /** The opposing team. */
   defenseTeamId: TeamId;
   actionId: ActionId;
+  /** Situational modifier from the chosen scenario play; omitted means none. */
+  modifier?: { multiplier: number; bonus: number };
   /** Seed shared by the frames and the outcome. */
   seed: number;
 }
@@ -292,6 +294,7 @@ export function runKeyMomentCourt(input: KeyMomentCourtInput): KeyMomentCourtRun
       rebounding: reboundingOf(input, p.id),
       offense: p.side === 'offense',
     })),
+    modifier: input.modifier,
   }, rng);
 
   scrambleRebound(frames, reboundWinnerId, hoop);
