@@ -43,6 +43,21 @@ describe('ball height and rebound on the court', () => {
     expect(zs[zs.length - 1]).toBeLessThan(Math.max(...zs));
   });
 
+  it('moves the rebound winner toward the rim after a miss', () => {
+    // Find a seed whose drive misses and has a rebound winner.
+    for (let seed = 1; seed < 200; seed++) {
+      const run = runKeyMomentCourt(input(seed, 'drive'));
+      if (run.outcome.success || run.reboundWinnerId === null) continue;
+      const id = run.reboundWinnerId;
+      const first = run.frames[run.frames.length - 1]!.players.find((p) => p.id === id)!;
+      const before = run.frames[4]!.players.find((p) => p.id === id)!;
+      const moved = Math.hypot(first.x - before.x, first.y - before.y);
+      expect(moved).toBeGreaterThan(0);
+      return;
+    }
+    throw new Error('no missed drive with a rebound winner in 200 seeds');
+  });
+
   it('names a rebound winner from the players on the court, or none', () => {
     const run = runKeyMomentCourt(input(17, 'drive'));
     const ids = new Set(run.frames[0]!.players.map((p) => p.id));

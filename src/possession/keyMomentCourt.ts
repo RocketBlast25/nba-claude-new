@@ -10,7 +10,8 @@ import { STEP_MS } from './types';
 import { SPRINT_SPEED, DEFENDER_SPEED, stepTactics, type TacticalPlayer, type TacticalState } from './tactics';
 import { type ActionId, type DecisionOutcome } from './decision';
 import { resolvePlay } from './outcome';
-import { arcHeight } from './ballphysics';
+import { arcHeight, PASS_PROFILE } from './ballphysics';
+import { dist } from './defense';
 import { createPossession } from './engine';
 import { snapshotCourt, type CourtSnapshot } from './replay';
 import type { PossessionState } from './types';
@@ -47,6 +48,7 @@ export function attackingHoop(carrierX: number): { x: number; y: number } {
 function choreograph(
   state: PossessionState,
   actorId: PlayerId,
+  actionId: ActionId,
 ): { frames: CourtSnapshot[]; release: TacticalState } {
   const first = snapshotCourt(state);
   const carrier = first.players.find((p) => p.id === actorId) ?? { x: 470, y: 250 };
@@ -101,7 +103,8 @@ function choreograph(
       const u = (f - RELEASE_FRAME) / (FRAME_COUNT - 1 - RELEASE_FRAME);
       const from = release.players.find((p) => p.id === actorId)?.pos ?? handler.pos;
       const path = arcPoint(from, hoop, u);
-      const z = arcHeight(u, SHOT_APEX);
+      const profile = actionId === 'pass' ? PASS_PROFILE.chest : undefined;
+      const z = arcHeight(u, profile?.apex ?? SHOT_APEX);
       ballAt = z > 0 ? { x: path.x, y: path.y, z } : { x: path.x, y: path.y };
     }
     const snapshotPlayers = first.players.map((p) => {
@@ -203,6 +206,28 @@ export function buildKeyMomentCourt(input: KeyMomentCourtInput, rng: SeededRng):
   return entities;
 }
 
+/**
+ * Rebound scramble: after a missed shot the winner runs from where they stood toward
+ * the rim across the last frames, and holds the ball there. Only the winner moves, so
+ * the rest of the court is unchanged. Mutates the frames in place.
+ */
+function scrambleRebound(frames: CourtSnapshot[], winnerId: string | null, hoop: { x: number; y: number }): void {
+  if (winnerId === null) return;
+  const start = frames[RELEASE_FRAME]?.players.find((p) => p.id === winnerId);
+  if (!start) return;
+  const span = FRAME_COUNT - 1 - RELEASE_FRAME;
+  for (let f = RELEASE_FRAME + 1; f < FRAME_COUNT; f++) {
+    const u = ease((f - RELEASE_FRAME) / span);
+    // Stop short of the rim: the winner secures the ball just in front of the hoop.
+    const target = { x: hoop.x + (start.x - hoop.x) * 0.15, y: hoop.y + (start.y - hoop.y) * 0.15 };
+    const pos = blend(start, target, u);
+    const frame = frames[f]!;
+    frame.players = frame.players.map((p) => (p.id === winnerId ? { ...p, x: pos.x, y: pos.y } : p));
+    // The rebounder secures the ball: it moves with the winner, no longer airborne.
+    frame.ballPos = { x: pos.x, y: pos.y };
+  }
+}
+
 /** A player's `rebounding` rating from the input, or a neutral 50 if not listed. */
 function reboundingOf(input: KeyMomentCourtInput, id: string): number {
   const found = [input.actor, ...input.offense, ...input.defense].find((p) => p.id === id);
@@ -220,17 +245,22 @@ export function runKeyMomentCourt(input: KeyMomentCourtInput): KeyMomentCourtRun
   const attributes: Attributes = input.actor.attributes;
   const start = createPossession(entities, { attributes, rng });
 
-  const { frames, release } = choreograph(start, input.actor.id);
+  const { frames, release } = choreograph(start, input.actor.id, input.actionId);
   const byId = new Map(release.players.map((p) => [p.id, p]));
   const shooter = byId.get(input.actor.id)!;
   const hoop = attackingHoop(shooter.pos.x);
   const defenders = release.players.filter((p) => p.side === 'defense');
+  // A pass goes to the nearest teammate at release (deterministic, no RNG).
+  const receiver = release.players
+    .filter((p) => p.side === 'offense' && p.id !== input.actor.id)
+    .sort((a, b) => dist(shooter.pos, a.pos) - dist(shooter.pos, b.pos))[0];
   const { outcome, reboundWinnerId } = resolvePlay(attributes, {
     actionId: input.actionId,
     shooter: shooter.pos,
     shooterVel: shooter.vel,
     hoop,
     defenders: defenders.map((d) => ({ pos: d.pos, vel: d.vel })),
+    pass: receiver ? { receiver: receiver.pos, style: 'chest' } : undefined,
     reboundCandidates: release.players.map((p) => ({
       id: p.id,
       pos: p.pos,
@@ -238,6 +268,8 @@ export function runKeyMomentCourt(input: KeyMomentCourtInput): KeyMomentCourtRun
       offense: p.side === 'offense',
     })),
   }, rng);
+
+  scrambleRebound(frames, reboundWinnerId, hoop);
 
   return {
     frames,
