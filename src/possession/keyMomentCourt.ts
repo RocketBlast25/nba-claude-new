@@ -7,13 +7,91 @@ import type { Attributes, Player } from '../sim/core/models';
 import { SeededRng } from '../sim/core/random';
 import type { PlayerId, TeamId } from '../sim/core/types';
 import { decide, type ActionId, type DecisionOutcome } from './decision';
-import { createPossession, step } from './engine';
+import { createPossession } from './engine';
 import { snapshotCourt, type CourtSnapshot } from './replay';
+import type { PossessionState } from './types';
 import type { CourtEntity } from './types';
 
 /** Frames captured across the execution span, one every FRAME_MS. */
 const FRAME_COUNT = 8;
 const FRAME_MS = 500;
+
+/** Hoop centres on the 940x500 court. The offense attacks the hoop on the far side. */
+const HOOP_LEFT = { x: 52.5, y: 250 };
+const HOOP_RIGHT = { x: 887.5, y: 250 };
+
+/** Keyframe where the ball leaves the carrier; the last keyframes fly the arc. */
+const RELEASE_FRAME = FRAME_COUNT - 4;
+/** Peak sideways offset of the ball path, in court units. */
+const ARC_BULGE = 24;
+
+/** Hoop the carrier attacks: the one on the opposite half from its starting x. */
+export function attackingHoop(carrierX: number): { x: number; y: number } {
+  return carrierX < 470 ? HOOP_RIGHT : HOOP_LEFT;
+}
+
+/**
+ * Builds the keyframes with deterministic, role-based movement instead of random
+ * drift. The carrier drives toward the attacking hoop and keeps the ball. Teammates
+ * spread to the wings and corners. Each defender shadows the offensive player at
+ * the same index. Frame 0 is the setup, frame N-1 the end of the play.
+ */
+function choreograph(state: PossessionState, actorId: PlayerId, actionId: ActionId): CourtSnapshot[] {
+  const first = snapshotCourt(state);
+  const carrier = first.players.find((p) => p.id === actorId) ?? { x: 470, y: 250 };
+  const hoop = attackingHoop(carrier.x);
+  const carrierTeam = state.entities.find((e) => e.id === actorId)?.teamId ?? null;
+  const offense = first.players.filter((p) => p.teamId === carrierTeam);
+  const defense = first.players.filter((p) => p.teamId !== null && p.teamId !== carrierTeam);
+  const spots = [
+    { x: hoop.x > 470 ? 780 : 160, y: 60 },
+    { x: hoop.x > 470 ? 780 : 160, y: 440 },
+    { x: hoop.x > 470 ? 640 : 300, y: 120 },
+    { x: hoop.x > 470 ? 640 : 300, y: 380 },
+  ];
+  // Shots arc to the hoop, passes to the first teammate spot, resets keep the ball.
+  const target = actionId === 'pass' ? spots[0]! : actionId === 'reset' ? null : hoop;
+  const frames: CourtSnapshot[] = [];
+  for (let f = 0; f < FRAME_COUNT; f++) {
+    const t = f / (FRAME_COUNT - 1);
+    const carrierAt = blend(carrier, hoop, t * 0.6);
+    const ballAt =
+      f <= RELEASE_FRAME || target === null
+        ? carrierAt
+        : arcPoint(blend(carrier, hoop, (RELEASE_FRAME / (FRAME_COUNT - 1)) * 0.6), target, (f - RELEASE_FRAME) / (FRAME_COUNT - 1 - RELEASE_FRAME));
+    const players = first.players.map((p) => {
+      if (p.id === actorId) return { ...p, ...carrierAt };
+      const mateIdx = offense.findIndex((m) => m.id === p.id) - 1;
+      if (mateIdx >= 0 && mateIdx < spots.length) {
+        return { ...p, ...blend(p, spots[mateIdx]!, t) };
+      }
+      const defIdx = defense.findIndex((d) => d.id === p.id);
+      if (defIdx >= 0) {
+        const target = offense[defIdx % offense.length] ?? carrier;
+        const shadow = { x: target.x + (hoop.x > target.x ? -18 : 18), y: target.y };
+        return { ...p, ...blend(p, shadow, t) };
+      }
+      return p;
+    });
+    frames.push({ t: Math.round(f * FRAME_MS), ballPos: ballAt, players });
+  }
+  return frames;
+}
+
+/** Ball path after release: a straight line with a perpendicular bulge that peaks mid-flight. */
+function arcPoint(from: { x: number; y: number }, to: { x: number; y: number }, u: number) {
+  const p = blend(from, to, u);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const bulge = Math.sin(Math.PI * u) * ARC_BULGE;
+  return { x: p.x - (dy / len) * bulge, y: p.y + (dx / len) * bulge };
+}
+
+/** Linear blend between two points, clamped to the court. */
+function blend(a: { x: number; y: number }, b: { x: number; y: number }, t: number) {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
 
 export interface KeyMomentCourtInput {
   /** The user's player who holds the ball. */
@@ -91,12 +169,7 @@ export function runKeyMomentCourt(input: KeyMomentCourtInput): KeyMomentCourtRun
   const start = createPossession(entities, { attributes, rng });
   const { state, outcome } = decide(start, input.actionId);
 
-  const frames: CourtSnapshot[] = [snapshotCourt(state)];
-  let current = state;
-  for (let f = 1; f < FRAME_COUNT; f++) {
-    current = step(current, FRAME_MS);
-    frames.push(snapshotCourt(current));
-  }
+  const frames = choreograph(state, input.actor.id, input.actionId);
   return {
     frames,
     outcome,
