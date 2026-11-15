@@ -81,12 +81,16 @@ export function KeyMomentOverlay() {
       actionId,
       seed: rollSeed,
     });
+    const labels: NonNullable<CourtRoles['labels']> = {};
+    for (const p of [player, ...playersOf(userTeamId), ...playersOf(opponentId)]) {
+      labels[p.id] = { number: jerseyNumber(p.id), position: p.position };
+    }
     setRoll({
       actionId,
       success: run.outcome.success,
       reward: run.outcome.reward,
       frames: run.frames,
-      roles: { offenseIds: run.offenseIds, defenseIds: run.defenseIds, actorId: run.actorId },
+      roles: { offenseIds: run.offenseIds, defenseIds: run.defenseIds, actorId: run.actorId, labels },
     });
   };
 
@@ -169,4 +173,14 @@ export function KeyMomentOverlay() {
       </div>
     </div>
   );
+}
+
+/**
+ * Display-only jersey number, 0–99, derived from the player id so it is stable
+ * across renders. The player model has no jersey field.
+ */
+function jerseyNumber(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return hash % 100;
 }

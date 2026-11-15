@@ -4,7 +4,7 @@ import { simulateSeason, type GameBoxScoreRecord } from '../../../src/sim/league
 import { selectBoxScore } from '../../../src/store/gameStore';
 import { buildLeague, careerFrom } from '../store/leagueFixture';
 import { useGameStore } from '../../../src/store/gameStore';
-import { selectMoments } from '../../../src/sim/career/keyMoments';
+import { runKeyMomentCourt } from '../../../src/possession/keyMomentCourt';
 import { COURT_WIDTH, COURT_HEIGHT } from '../../../src/possession/types';
 import { snapshotCourt } from '../../../src/possession/replay';
 import { createPossession, step } from '../../../src/possession/engine';
@@ -52,23 +52,29 @@ describe('box-score drilldown (Phase B)', () => {
 });
 
 describe('court replay snapshots (Phase B)', () => {
+  const league = buildLeague(21);
+  const career = careerFrom(league);
+  const [actor, ...others] = career.players.slice(0, 5);
+  const offense = others.slice(0, 4);
+  const defense = career.players.slice(5, 10);
+  const run = (seed: number) =>
+    runKeyMomentCourt({
+      actor: actor!,
+      offense,
+      defense,
+      offenseTeamId: 'T1' as never,
+      defenseTeamId: 'T2' as never,
+      actionId: 'drive',
+      seed,
+    });
+
   it('replay frames are deterministic for the same seed', () => {
-    const league = buildLeague(21);
-    const career = careerFrom(league);
-    const actors = career.players.slice(0, 5);
-    const a = selectMoments('g1', 1, true, actors, new SeededRng(9));
-    const b = selectMoments('g1', 1, true, actors, new SeededRng(9));
-    expect(JSON.stringify(a.map((m) => m.replay))).toBe(JSON.stringify(b.map((m) => m.replay)));
+    expect(JSON.stringify(run(9).frames)).toBe(JSON.stringify(run(9).frames));
   });
 
   it('replay positions stay within the 940x500 court bounds', () => {
-    const league = buildLeague(21);
-    const career = careerFrom(league);
-    const actors = career.players.slice(0, 5);
-    const moments = selectMoments('g1', 1, true, actors, new SeededRng(31));
-    expect(moments.length).toBeGreaterThan(0);
-    for (const m of moments) {
-      for (const frame of m.replay ?? []) {
+    for (let seed = 1; seed <= 20; seed++) {
+      for (const frame of run(seed).frames) {
         expect(frame.ballPos.x).toBeGreaterThanOrEqual(0);
         expect(frame.ballPos.x).toBeLessThanOrEqual(COURT_WIDTH);
         expect(frame.ballPos.y).toBeGreaterThanOrEqual(0);
@@ -84,10 +90,7 @@ describe('court replay snapshots (Phase B)', () => {
   });
 
   it('replay frames come from the engine, starting at the ball carrier', () => {
-    const career = careerFrom(buildLeague(21));
-    const actors = career.players.slice(0, 5);
-    const [moment] = selectMoments('g3', 1, true, actors, new SeededRng(12));
-    const frames = moment?.replay ?? [];
+    const { frames } = run(12);
     expect(frames.length).toBe(8);
     const times = frames.map((f) => f.t);
     expect(times[0]).toBe(0);
@@ -95,16 +98,9 @@ describe('court replay snapshots (Phase B)', () => {
     for (let i = 1; i < times.length; i++) {
       expect(Math.abs((times[i] ?? 0) - (times[i - 1] ?? 0) - 500)).toBeLessThan(20);
     }
-    const carrier = frames[0]?.players.find((p) => p.id === String(moment?.actorId));
+    const carrier = frames[0]?.players.find((p) => p.id === String(actor?.id));
     expect(carrier).toBeDefined();
     expect(frames[0]?.ballPos).toEqual({ x: carrier?.x, y: carrier?.y });
-  });
-
-  it('AI moments carry no replay data', () => {
-    const league = buildLeague(21);
-    const career = careerFrom(league);
-    const moments = selectMoments('g2', 1, false, career.players.slice(0, 5), new SeededRng(4));
-    for (const m of moments) expect(m.replay).toBeUndefined();
   });
 
   it('snapshotCourt clamps out-of-bounds entities and is stable', () => {

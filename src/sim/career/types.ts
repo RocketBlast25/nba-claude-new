@@ -43,8 +43,6 @@ export interface KeyMoment {
   userControlled: boolean;
   actorId: Player['id'];
   attributes: Attributes;
-  /** Court frames for replay. Only set on user-controlled moments (Milestone 7, Phase B). */
-  replay?: import('../../possession/replay').CourtSnapshot[];
 }
 
 export interface KeyMomentResult {
