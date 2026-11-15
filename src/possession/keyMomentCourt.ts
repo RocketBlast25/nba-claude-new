@@ -6,6 +6,8 @@
 import type { Attributes, Player } from '../sim/core/models';
 import { SeededRng } from '../sim/core/random';
 import type { PlayerId, TeamId } from '../sim/core/types';
+import { STEP_MS } from './types';
+import { SPRINT_SPEED, DEFENDER_SPEED, stepTactics, type TacticalPlayer, type TacticalState } from './tactics';
 import { decide, type ActionId, type DecisionOutcome } from './decision';
 import { createPossession } from './engine';
 import { snapshotCourt, type CourtSnapshot } from './replay';
@@ -38,50 +40,57 @@ export function attackingHoop(carrierX: number): { x: number; y: number } {
  * spread to the wings and corners. Each defender shadows the offensive player at
  * the same index. Frame 0 is the setup, frame N-1 the end of the play.
  */
-function choreograph(state: PossessionState, actorId: PlayerId, actionId: ActionId): CourtSnapshot[] {
+function choreograph(state: PossessionState, actorId: PlayerId): CourtSnapshot[] {
   const first = snapshotCourt(state);
   const carrier = first.players.find((p) => p.id === actorId) ?? { x: 470, y: 250 };
   const hoop = attackingHoop(carrier.x);
+  const attackingRight = hoop.x > 470;
   const carrierTeam = state.entities.find((e) => e.id === actorId)?.teamId ?? null;
+
+  // Seed the tactical stepper from the snapshot. Offense takes spacing roles in
+  // order, the actor as the handler; defenders guard the offensive player at their index.
   const offense = first.players.filter((p) => p.teamId === carrierTeam);
   const defense = first.players.filter((p) => p.teamId !== null && p.teamId !== carrierTeam);
-  const spots = [
-    { x: hoop.x > 470 ? 780 : 160, y: 60 },
-    { x: hoop.x > 470 ? 780 : 160, y: 440 },
-    { x: hoop.x > 470 ? 640 : 300, y: 120 },
-    { x: hoop.x > 470 ? 640 : 300, y: 380 },
+  const handlerId = actorId;
+  const mates = offense.filter((p) => p.id !== actorId);
+  const players: TacticalPlayer[] = [
+    { id: actorId, side: 'offense', pos: { x: carrier.x, y: carrier.y }, vel: { x: 0, y: 0 }, role: 0, topSpeed: SPRINT_SPEED },
+    ...mates.map((p, i) => ({
+      id: p.id,
+      side: 'offense' as const,
+      pos: { x: p.x, y: p.y },
+      vel: { x: 0, y: 0 },
+      role: i + 1,
+      topSpeed: SPRINT_SPEED,
+    })),
+    ...defense.map((p, i) => ({
+      id: p.id,
+      side: 'defense' as const,
+      pos: { x: p.x, y: p.y },
+      vel: { x: 0, y: 0 },
+      role: 0,
+      guards: (offense[i % offense.length] ?? offense[0])!.id,
+      topSpeed: DEFENDER_SPEED,
+    })),
   ];
-  // Shots arc to the hoop, passes to the first teammate spot, resets keep the ball.
-  const target = actionId === 'pass' ? spots[0]! : actionId === 'reset' ? null : hoop;
-  // A pass lands on the receiver's moving position, not a fixed placeholder.
-  const receiverStart = offense[1] ?? carrier;
-  const passTarget = (f: number) =>
-    easedBlend(receiverStart, spots[0]!, Math.min(1, f / (FRAME_COUNT - 1)));
+  let tactical: TacticalState = { players, handlerId, spacing: 'five_out', timeMs: 0 };
+
   const frames: CourtSnapshot[] = [];
+  const ticksPerFrame = Math.round(FRAME_MS / STEP_MS);
   for (let f = 0; f < FRAME_COUNT; f++) {
-    const t = f / (FRAME_COUNT - 1);
-    const carrierAt = easedBlend(carrier, hoop, t * 0.6);
-    // Dribble bounce: the ball rises and falls with the carrier before release.
+    if (f > 0) {
+      for (let i = 0; i < ticksPerFrame; i++) tactical = stepTactics(tactical, attackingRight);
+    }
+    const byId = new Map(tactical.players.map((p) => [p.id, p]));
+    const handler = byId.get(actorId)!;
+    // Dribble bounce on the handler until release; the ball follows the handler's path.
     const dribbleLift = f <= RELEASE_FRAME ? Math.abs(Math.sin(f * Math.PI * 1.5)) * DRIBBLE_BOUNCE : 0;
-    const ballAt =
-      f <= RELEASE_FRAME || target === null
-        ? { x: carrierAt.x, y: carrierAt.y - dribbleLift }
-        : arcPoint(easedBlend(carrier, hoop, (RELEASE_FRAME / (FRAME_COUNT - 1)) * 0.6), passTarget(f), (f - RELEASE_FRAME) / (FRAME_COUNT - 1 - RELEASE_FRAME));
-    const players = first.players.map((p) => {
-      if (p.id === actorId) return { ...p, ...carrierAt };
-      const mateIdx = offense.findIndex((m) => m.id === p.id) - 1;
-      if (mateIdx >= 0 && mateIdx < spots.length) {
-        return { ...p, ...easedBlend(p, spots[mateIdx]!, t) };
-      }
-      const defIdx = defense.findIndex((d) => d.id === p.id);
-      if (defIdx >= 0) {
-        const target = offense[defIdx % offense.length] ?? carrier;
-        const shadow = { x: target.x + (hoop.x > target.x ? -18 : 18), y: target.y };
-        return { ...p, ...easedBlend(p, shadow, t) };
-      }
-      return p;
+    const ballAt = { x: handler.pos.x, y: handler.pos.y - dribbleLift };
+    const snapshotPlayers = first.players.map((p) => {
+      const sim = byId.get(p.id);
+      return sim ? { ...p, x: sim.pos.x, y: sim.pos.y } : p;
     });
-    frames.push({ t: Math.round(f * FRAME_MS), ballPos: ballAt, players });
+    frames.push({ t: Math.round(f * FRAME_MS), ballPos: ballAt, players: snapshotPlayers });
   }
   return frames;
 }
@@ -108,11 +117,6 @@ function blend(a: { x: number; y: number }, b: { x: number; y: number }, t: numb
 export function ease(t: number): number {
   const c = Math.min(1, Math.max(0, t));
   return c * c * (3 - 2 * c);
-}
-
-/** Eased blend for player paths: slow start, fast middle, slow arrival. */
-function easedBlend(a: { x: number; y: number }, b: { x: number; y: number }, t: number) {
-  return blend(a, b, ease(t));
 }
 
 export interface KeyMomentCourtInput {
@@ -191,7 +195,7 @@ export function runKeyMomentCourt(input: KeyMomentCourtInput): KeyMomentCourtRun
   const start = createPossession(entities, { attributes, rng });
   const { state, outcome } = decide(start, input.actionId);
 
-  const frames = choreograph(state, input.actor.id, input.actionId);
+  const frames = choreograph(state, input.actor.id);
   return {
     frames,
     outcome,
