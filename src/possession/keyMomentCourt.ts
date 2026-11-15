@@ -10,7 +10,7 @@ import { STEP_MS } from './types';
 import { SPRINT_SPEED, DEFENDER_SPEED, stepTactics, type TacticalPlayer, type TacticalState } from './tactics';
 import { type ActionId, type DecisionOutcome } from './decision';
 import { resolvePlay } from './outcome';
-import { arcHeight, PASS_PROFILE } from './ballphysics';
+import { arcHeight, PASS_PROFILE, type PassStyle } from './ballphysics';
 import { dist } from './defense';
 import { createPossession } from './engine';
 import { snapshotCourt, type CourtSnapshot } from './replay';
@@ -94,6 +94,7 @@ function choreograph(
     if (f === RELEASE_FRAME) release = tactical;
     const byId = new Map(tactical.players.map((p) => [p.id, p]));
     const handler = byId.get(actorId)!;
+  const passProfile = actionId === 'pass' ? passStyleFor(state, actorId) : undefined;
     // Dribble bounce on the handler until release; the ball follows the handler's path.
     const dribbleLift = f <= RELEASE_FRAME ? Math.abs(Math.sin(f * Math.PI * 1.5)) * DRIBBLE_BOUNCE : 0;
     let ballAt: { x: number; y: number; z?: number } = { x: handler.pos.x, y: handler.pos.y - dribbleLift };
@@ -103,7 +104,7 @@ function choreograph(
       const u = (f - RELEASE_FRAME) / (FRAME_COUNT - 1 - RELEASE_FRAME);
       const from = release.players.find((p) => p.id === actorId)?.pos ?? handler.pos;
       const path = arcPoint(from, hoop, u);
-      const profile = actionId === 'pass' ? PASS_PROFILE.chest : undefined;
+      const profile = passProfile ? PASS_PROFILE[passProfile] : undefined;
       const z = arcHeight(u, profile?.apex ?? SHOT_APEX);
       ballAt = z > 0 ? { x: path.x, y: path.y, z } : { x: path.x, y: path.y };
     }
@@ -204,6 +205,30 @@ export function buildKeyMomentCourt(input: KeyMomentCourtInput, rng: SeededRng):
     });
   }
   return entities;
+}
+
+/** Pass distance (court units) at which a chest pass gives way to a skip, and a skip to a lob. */
+const SKIP_DISTANCE = 220;
+const LOB_DISTANCE = 380;
+
+/** Pass style by distance to the nearest teammate: short chest, medium skip, long lob. */
+export function passStyleFor(state: PossessionState, actorId: string): PassStyle {
+  const d = passDistance(state, actorId);
+  if (d >= LOB_DISTANCE) return 'lob';
+  if (d >= SKIP_DISTANCE) return 'skip';
+  return 'chest';
+}
+
+/** Distance from the actor to the nearest teammate, or 0 when there is none. */
+function passDistance(state: PossessionState, actorId: string): number {
+  const actor = state.entities.find((e) => e.id === actorId);
+  if (!actor) return 0;
+  let best = Infinity;
+  for (const e of state.entities) {
+    if (e.id === actorId || e.id === 'ball' || e.teamId !== actor.teamId) continue;
+    best = Math.min(best, dist(actor, e));
+  }
+  return Number.isFinite(best) ? best : 0;
 }
 
 /**
