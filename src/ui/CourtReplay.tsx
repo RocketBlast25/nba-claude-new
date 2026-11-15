@@ -18,6 +18,10 @@ export interface CourtRoles {
 
 /** Total playback time across all keyframes, in milliseconds. */
 const PLAYBACK_MS = 3500;
+/** Ball height (court units) at which its floor shadow has shrunk to half size. */
+const SHADOW_FALLOFF = 120;
+/** Number of past keyframes drawn as the ball's trail. */
+const TRAIL_LENGTH = 4;
 
 /**
  * Top-down Canvas 2D replay of court snapshots. Playback runs on requestAnimationFrame
@@ -42,18 +46,27 @@ export function CourtReplay({
   const [playing, setPlaying] = useState(autoPlay);
   const last = Math.max(0, frames.length - 1);
 
+  // Latest props live in refs so the playback loop does not restart when a parent passes a
+  // new `roles` object on re-render.
+  const framesRef = useRef(frames);
+  const rolesRef = useRef(roles);
+  framesRef.current = frames;
+  rolesRef.current = roles;
+
   const paint = useCallback(() => {
     const ctx = canvasRef.current?.getContext('2d');
-    if (!ctx || frames.length === 0) return;
-    drawCourt(ctx, frames, progressRef.current, roles);
-    const shown = Math.min(last, Math.round(progressRef.current));
+    const current = framesRef.current;
+    if (!ctx || current.length === 0) return;
+    drawCourt(ctx, current, progressRef.current, rolesRef.current);
+    const shown = Math.min(current.length - 1, Math.round(progressRef.current));
     setFrameIndex((prev) => (prev === shown ? prev : shown));
-  }, [frames, roles, last]);
+  }, []);
 
-  // Redraw when the frames or roles change, or the user scrubs (scrub calls paint directly).
+  // Redraw on new frames or roles. New frames restart the playhead, so an old position is not reused.
   useEffect(() => {
+    progressRef.current = 0;
     paint();
-  }, [paint]);
+  }, [frames, roles, paint]);
 
   // Progress is a 0..last fractional frame index, advanced by elapsed time.
   useEffect(() => {
@@ -164,6 +177,23 @@ function interpolate(frames: CourtSnapshot[], progress: number): { ball: Point; 
  * Where the ball left the carrier: the ball's position at the release keyframe, i.e.
  * the shooter's or passer's coordinates at release, not the possession's start.
  */
+/**
+ * Unit direction a player is moving at `progress`, from its keyframe-to-keyframe motion.
+ * Returns null when the player is standing still, so no facing tick is drawn.
+ */
+function facingOf(frames: CourtSnapshot[], progress: number, id: string): Point | null {
+  const i = Math.min(frames.length - 1, Math.floor(progress));
+  const j = Math.min(frames.length - 1, i + 1);
+  const a = frames[i]!.players.find((p) => p.id === id);
+  const b = frames[j]!.players.find((p) => p.id === id);
+  if (!a || !b) return null;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.5) return null;
+  return { x: dx / len, y: dy / len };
+}
+
 function releaseOrigin(frames: CourtSnapshot[]): Point | undefined {
   return frames[RELEASE_FRAME]?.ballPos;
 }
@@ -197,6 +227,18 @@ function drawCourt(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progr
   for (const [id, raw] of players) {
     // Keep the circle and its labels fully on the canvas.
     const p = { x: Math.min(COURT_WIDTH - 14, Math.max(14, raw.x)), y: Math.min(COURT_HEIGHT - 30, Math.max(14, raw.y)) };
+    // Facing: the direction the player is moving between keyframes, when it is moving.
+    const facing = facingOf(frames, progress, id);
+    if (facing) {
+      ctx.save();
+      ctx.strokeStyle = colorFor(id, roles);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x + facing.x * 10, p.y + facing.y * 10);
+      ctx.lineTo(p.x + facing.x * 16, p.y + facing.y * 16);
+      ctx.stroke();
+      ctx.restore();
+    }
     ctx.beginPath();
     ctx.fillStyle = colorFor(id, roles);
     ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
@@ -213,9 +255,49 @@ function drawCourt(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progr
       ctx.fillText(label.position, p.x, p.y + 18);
     }
   }
+  drawBallTrail(ctx, frames, progress);
+  drawBall(ctx, ball);
+}
+
+/**
+ * Fading trail behind the ball over the last few keyframes, so passes and dribbles read
+ * as motion. Each segment's alpha decreases toward the tail.
+ */
+function drawBallTrail(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progress: number): void {
+  const head = Math.min(frames.length - 1, Math.floor(progress));
+  const from = Math.max(0, head - TRAIL_LENGTH);
+  ctx.save();
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  for (let k = from; k < head; k++) {
+    const a = frames[k]!.ballPos;
+    const b = frames[k + 1]!.ballPos;
+    const alpha = ((k - from + 1) / (head - from)) * 0.5;
+    ctx.strokeStyle = `rgba(255, 179, 71, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/**
+ * Ball with elevation: a floor shadow sits at the ball's ground point and shrinks and
+ * fades as the ball rises, while the ball itself grows slightly and lifts above the floor.
+ */
+function drawBall(ctx: CanvasRenderingContext2D, ball: Point & { z?: number }): void {
+  const z = Math.max(0, ball.z ?? 0);
+  const lift = Math.min(1, z / SHADOW_FALLOFF);
+  // Floor shadow: fixed at the ground point, smaller and lighter as the ball gets higher.
+  ctx.beginPath();
+  ctx.fillStyle = `rgba(0, 0, 0, ${(0.5 * (1 - lift)).toFixed(3)})`;
+  ctx.ellipse(ball.x, ball.y, 6 * (1 - 0.5 * lift), 3 * (1 - 0.5 * lift), 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Ball body rises with z (drawn higher on screen) and scales up slightly at the top.
   ctx.beginPath();
   ctx.fillStyle = COLOR.ball;
-  ctx.arc(ball.x, ball.y, 6, 0, Math.PI * 2);
+  ctx.arc(ball.x, ball.y - z, 6 * (1 + 0.25 * lift), 0, Math.PI * 2);
   ctx.fill();
 }
 
