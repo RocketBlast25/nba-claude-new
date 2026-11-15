@@ -150,6 +150,7 @@ function drawCourt(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progr
   ctx.strokeStyle = '#4a6078';
   ctx.lineWidth = 2;
   ctx.strokeRect(1, 1, COURT_WIDTH - 2, COURT_HEIGHT - 2);
+  drawMarkings(ctx);
 
   // Subtle dashed arc from the ball's first keyframe to where it is now: the shot or pass line.
   const start = frames[0]?.ballPos;
@@ -167,7 +168,9 @@ function drawCourt(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progr
     ctx.restore();
   }
 
-  for (const [id, p] of players) {
+  for (const [id, raw] of players) {
+    // Keep the circle and its labels fully on the canvas.
+    const p = { x: Math.min(COURT_WIDTH - 14, Math.max(14, raw.x)), y: Math.min(COURT_HEIGHT - 30, Math.max(14, raw.y)) };
     ctx.beginPath();
     ctx.fillStyle = colorFor(id, roles);
     ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
@@ -188,6 +191,49 @@ function drawCourt(ctx: CanvasRenderingContext2D, frames: CourtSnapshot[], progr
   ctx.fillStyle = COLOR.ball;
   ctx.arc(ball.x, ball.y, 6, 0, Math.PI * 2);
   ctx.fill();
+}
+
+/** Court lines, paint, arcs, hoops and backboards on the logical 940x500 court. */
+function drawMarkings(ctx: CanvasRenderingContext2D): void {
+  const H = COURT_HEIGHT;
+  const cy = H / 2;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(230, 237, 245, 0.35)';
+  ctx.fillStyle = 'rgba(230, 237, 245, 0.06)';
+  ctx.lineWidth = 2;
+  // Half-court line.
+  ctx.beginPath();
+  ctx.moveTo(COURT_WIDTH / 2, 0);
+  ctx.lineTo(COURT_WIDTH / 2, H);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(COURT_WIDTH / 2, cy, 60, 0, Math.PI * 2);
+  ctx.stroke();
+  for (const side of [0, 1]) {
+    const baseX = side === 0 ? 0 : COURT_WIDTH;
+    const dir = side === 0 ? 1 : -1;
+    // Paint (key) and free-throw circle.
+    ctx.fillRect(side === 0 ? 0 : COURT_WIDTH - 190, cy - 80, 190, 160);
+    ctx.strokeRect(side === 0 ? 0 : COURT_WIDTH - 190, cy - 80, 190, 160);
+    ctx.beginPath();
+    ctx.arc(baseX + dir * 190, cy, 60, side === 0 ? -Math.PI / 2 : Math.PI / 2, side === 0 ? Math.PI / 2 : -Math.PI / 2, side === 1);
+    ctx.stroke();
+    // Three-point arc.
+    ctx.beginPath();
+    ctx.arc(baseX + dir * 42, cy, 215, side === 0 ? -1.2 : Math.PI - 1.2, side === 0 ? 1.2 : Math.PI + 1.2);
+    ctx.stroke();
+    // Backboard and hoop.
+    ctx.strokeStyle = 'rgba(230, 237, 245, 0.7)';
+    ctx.beginPath();
+    ctx.moveTo(baseX + dir * 14, cy - 30);
+    ctx.lineTo(baseX + dir * 14, cy + 30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(baseX + dir * 42, cy, 9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(230, 237, 245, 0.35)';
+  }
+  ctx.restore();
 }
 
 function colorFor(id: string, roles?: CourtRoles): string {
