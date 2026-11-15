@@ -220,16 +220,23 @@ function drawMarkings(ctx: CanvasRenderingContext2D): void {
     ctx.stroke();
     // Three-point arc.
     ctx.beginPath();
-    ctx.arc(baseX + dir * 42, cy, 215, side === 0 ? -1.2 : Math.PI - 1.2, side === 0 ? 1.2 : Math.PI + 1.2);
+    ctx.arc(baseX + dir * 52.5, cy, 237.5, side === 0 ? -1.18 : Math.PI - 1.18, side === 0 ? 1.18 : Math.PI + 1.18);
+    ctx.stroke();
+    // Straight corner three-point lines, 3 ft from each sideline.
+    ctx.beginPath();
+    ctx.moveTo(baseX, 30);
+    ctx.lineTo(baseX + dir * 144, 30);
+    ctx.moveTo(baseX, H - 30);
+    ctx.lineTo(baseX + dir * 144, H - 30);
     ctx.stroke();
     // Backboard and hoop.
     ctx.strokeStyle = 'rgba(230, 237, 245, 0.7)';
     ctx.beginPath();
-    ctx.moveTo(baseX + dir * 14, cy - 30);
-    ctx.lineTo(baseX + dir * 14, cy + 30);
+    ctx.moveTo(baseX + dir * 40, cy - 30);
+    ctx.lineTo(baseX + dir * 40, cy + 30);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(baseX + dir * 42, cy, 9, 0, Math.PI * 2);
+    ctx.arc(baseX + dir * 52.5, cy, 7.5, 0, Math.PI * 2);
     ctx.stroke();
     ctx.strokeStyle = 'rgba(230, 237, 245, 0.35)';
   }
