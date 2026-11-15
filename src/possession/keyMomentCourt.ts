@@ -87,7 +87,7 @@ function choreograph(state: PossessionState, actorId: PlayerId, actionId: Action
 }
 
 /** Ball path after release: a straight line with a perpendicular bulge that peaks mid-flight. */
-function arcPoint(from: { x: number; y: number }, to: { x: number; y: number }, u: number) {
+export function arcPoint(from: { x: number; y: number }, to: { x: number; y: number }, u: number) {
   const p = blend(from, to, u);
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -101,9 +101,13 @@ function blend(a: { x: number; y: number }, b: { x: number; y: number }, t: numb
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
-/** Smoothstep easing: starts and ends with zero velocity, so cuts look organic. */
-function ease(t: number): number {
-  return t * t * (3 - 2 * t);
+/**
+ * Smoothstep easing: starts and ends with zero velocity, so cuts look organic.
+ * `t` is clamped to [0, 1], so out-of-range input cannot overshoot the endpoints.
+ */
+export function ease(t: number): number {
+  const c = Math.min(1, Math.max(0, t));
+  return c * c * (3 - 2 * c);
 }
 
 /** Eased blend for player paths: slow start, fast middle, slow arrival. */

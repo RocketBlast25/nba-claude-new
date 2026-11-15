@@ -14,7 +14,12 @@ The game has two heavy logic areas: the background season simulation (`sim/`) an
 
 ## Enforcement
 
-A Vitest import-boundary test fails if any file under `src/sim` or `src/possession` imports `react`, `react-dom`, or a DOM or Canvas global. This test is planned for Milestone 2.
+The Vitest import-boundary test in `tests/unit/architecture/import-boundary.test.ts` enforces the boundary:
+
+- `src/sim`, `src/sim/career`, `src/sim/season`, and `src/possession` must not import `react` or `react-dom`, and must not reference DOM, Canvas, browser storage (`indexedDB`, `localStorage`, `sessionStorage`), or animation (`requestAnimationFrame`, `cancelAnimationFrame`) globals.
+- `src/persistence` is the one layer allowed to use browser storage, so it is checked only for React and `react-dom` imports.
+
+The check is a line scan of the source text, with `//` line comments ignored. It does not follow transitive imports, so a forbidden global reached through a helper outside these directories is not caught.
 
 ## Consequences
 

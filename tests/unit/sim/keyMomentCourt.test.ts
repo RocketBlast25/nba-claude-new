@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildKeyMomentCourt, runKeyMomentCourt, type KeyMomentCourtInput } from '../../../src/possession/keyMomentCourt';
+import {
+  arcPoint,
+  buildKeyMomentCourt,
+  ease,
+  runKeyMomentCourt,
+  type KeyMomentCourtInput,
+} from '../../../src/possession/keyMomentCourt';
 import { ACTION_IDS, decide } from '../../../src/possession/decision';
 import { createPossession } from '../../../src/possession/engine';
 import { SeededRng } from '../../../src/sim/core/random';
@@ -25,6 +31,62 @@ function input(seed: number, actionId: KeyMomentCourtInput['actionId']): KeyMome
     seed,
   };
 }
+
+describe('court easing bounds', () => {
+  it('pins the endpoints and midpoint of smoothstep', () => {
+    expect(ease(0)).toBe(0);
+    expect(ease(1)).toBe(1);
+    expect(ease(0.5)).toBe(0.5);
+  });
+
+  it('clamps t below 0 to 0 instead of overshooting', () => {
+    expect(ease(-1)).toBe(0);
+    expect(ease(-0.0001)).toBe(0);
+  });
+
+  it('clamps t above 1 to 1 instead of overshooting', () => {
+    expect(ease(2)).toBe(1);
+    expect(ease(1.0001)).toBe(1);
+  });
+
+  it('stays within [0, 1] across a dense sweep', () => {
+    for (let t = -2; t <= 3; t += 0.05) {
+      const v = ease(t);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('zero-duration arc segments', () => {
+  it('returns the start point when from and to coincide', () => {
+    const p = { x: 120, y: 80 };
+    for (const u of [0, 0.5, 1]) {
+      const at = arcPoint(p, p, u);
+      expect(at.x).toBe(120);
+      expect(at.y).toBe(80);
+    }
+  });
+
+  it('stays finite for a zero-length segment (no NaN from the normal)', () => {
+    const p = { x: 300, y: 200 };
+    const at = arcPoint(p, p, 0.5);
+    expect(Number.isFinite(at.x)).toBe(true);
+    expect(Number.isFinite(at.y)).toBe(true);
+  });
+
+  it('hits the endpoints exactly at u = 0 and u = 1', () => {
+    const a = { x: 0, y: 0 };
+    const b = { x: 100, y: 0 };
+    // The bulge is sin(pi * u), which is ~1e-15 (not exactly 0) at u = 1, so compare with a tolerance.
+    const start = arcPoint(a, b, 0);
+    const end = arcPoint(a, b, 1);
+    expect(start.x).toBeCloseTo(0, 9);
+    expect(start.y).toBeCloseTo(0, 9);
+    expect(end.x).toBeCloseTo(100, 9);
+    expect(end.y).toBeCloseTo(0, 9);
+  });
+});
 
 describe('live Key Moment court run', () => {
   it('produces identical frames and outcome for the same moment and seed', () => {

@@ -90,13 +90,8 @@ import {
 } from '../sim/career/hallOfFame';
 import { defaultHallOfFameStorage, type HallOfFameStorage } from '../persistence/hallOfFameStore';
 import type { SlotId } from '../persistence/slots';
-import {
-  defaultSlotStorage,
-  readSlotAsync,
-  writeSlotAsync,
-  type AsyncSlotStorage,
-  type SlotWriteResult,
-} from '../persistence/idbSlots';
+import { readSlotAsync, writeSlotAsync, type SlotWriteResult } from '../persistence/idbSlots';
+import { slotStorage, startAutosave, writeAutosaveSlot } from './autosave';
 
 export type CareerPhase = 'regular_season' | 'playoffs' | 'draft' | 'offseason';
 
@@ -512,7 +507,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       phase: 'regular_season',
     });
     // The phase does not change, so the autosave subscriber would not fire for a new career.
-    void writeAutosave(payloadOf(get()));
+    void writeAutosaveSlot(payloadOf(get()), (partial) => useGameStore.setState(partial as Partial<GameStore>));
     return { ok: true, userTeamId: made.userTeamId, playerId: made.playerId };
   },
 
@@ -698,67 +693,8 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   },
 }));
 
-/** Delay that coalesces bursts of store updates (for example, one write per game batch). */
-const AUTOSAVE_DEBOUNCE_MS = 250;
-
-/**
- * Fields whose change means the career's progress changed and must be saved: phase, season
- * and playoff results, resumable run state, Key Moment queues, rosters and offers.
- */
-const AUTOSAVED_KEYS = [
-  'career',
-  'phase',
-  'userTeamId',
-  'season',
-  'playoffs',
-  'pendingMoments',
-  'resolvedMoments',
-  'leagueTeams',
-  'draftOrder',
-  'seasonRun',
-  'playoffsRun',
-] as const satisfies readonly (keyof GameStoreState)[];
-
-let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Autosave: any change to the persisted progress schedules a debounced write of the autosave
- * slot. The write runs off the UI path and the store is read when the timer fires, so the
- * latest state is saved. Covers season and playoff runs, Key Moment resolutions, trades and
- * contract signings without touching each action.
- */
-useGameStore.subscribe((state, prev) => {
-  if (!state.career) return;
-  if (AUTOSAVED_KEYS.every((key) => state[key] === prev[key])) return;
-  if (autosaveTimer !== null) clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(() => {
-    autosaveTimer = null;
-    const current = useGameStore.getState();
-    if (current.career) void writeAutosave(payloadOf(current));
-  }, AUTOSAVE_DEBOUNCE_MS);
-});
-
-/**
- * Flushes a pending autosave when the page is hidden or closed, so the last debounce window
- * is written instead of being lost with the tab.
- */
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => {
-    if (autosaveTimer === null) return;
-    clearTimeout(autosaveTimer);
-    autosaveTimer = null;
-    const current = useGameStore.getState();
-    if (current.career) void writeAutosave(payloadOf(current));
-  });
-}
-
-/** Writes the autosave slot and records the outcome for the shell's indicator. */
-async function writeAutosave(payload: CareerPayload): Promise<void> {
-  const result = await writeSlotAsync(slotStorage(), 'autosave', buildSave(payload));
-  useGameStore.setState(
-    result.ok ? { autosavedAt: Date.now(), autosaveError: null } : { autosaveError: result.error },
-  );
-}
+// Debounced autosave of persisted progress (see ./autosave.ts).
+startAutosave(useGameStore, payloadOf);
 
 /**
  * Plays one playoff game with the series RNG, mirroring the runPlayoffs game in
@@ -873,17 +809,6 @@ function applyPayload(
   p: CareerPayload,
 ): void {
   set({ ...initialState, ...p });
-}
-
-/**
- * IndexedDB when the browser has it; an in-memory fallback keeps Node tests working.
- * Shared across calls so a save written in one call can be read back in a later one.
- */
-let slots: AsyncSlotStorage | null = null;
-
-function slotStorage(): AsyncSlotStorage {
-  slots ??= defaultSlotStorage();
-  return slots;
 }
 
 /** Draws the user's Key Moments for one game and queues them. Pure helper. */
