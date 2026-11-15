@@ -6,8 +6,7 @@ import {
   runKeyMomentCourt,
   type KeyMomentCourtInput,
 } from '../../../src/possession/keyMomentCourt';
-import { ACTION_IDS, decide } from '../../../src/possession/decision';
-import { createPossession } from '../../../src/possession/engine';
+import { ACTION_IDS } from '../../../src/possession/decision';
 import { SeededRng } from '../../../src/sim/core/random';
 import type { Attributes, Player } from '../../../src/sim/core/models';
 import type { PlayerId, TeamId } from '../../../src/sim/core/types';
@@ -31,6 +30,25 @@ function input(seed: number, actionId: KeyMomentCourtInput['actionId']): KeyMome
     seed,
   };
 }
+
+describe('ball height and rebound on the court', () => {
+  it('gives the ball a height that rises on the shot arc and returns to the floor', () => {
+    const run = runKeyMomentCourt(input(17, 'drive'));
+    const zs = run.frames.map((f) => f.ballPos.z ?? 0);
+    // The ball is airborne after release: some frame is above the floor.
+    expect(Math.max(...zs)).toBeGreaterThan(0);
+    // The arc rises then falls: the peak is not on the last frame.
+    const peak = zs.indexOf(Math.max(...zs));
+    expect(peak).toBeLessThan(zs.length - 1);
+    expect(zs[zs.length - 1]).toBeLessThan(Math.max(...zs));
+  });
+
+  it('names a rebound winner from the players on the court, or none', () => {
+    const run = runKeyMomentCourt(input(17, 'drive'));
+    const ids = new Set(run.frames[0]!.players.map((p) => p.id));
+    if (run.reboundWinnerId !== null) expect(ids.has(run.reboundWinnerId)).toBe(true);
+  });
+});
 
 describe('court easing bounds', () => {
   it('pins the endpoints and midpoint of smoothstep', () => {
@@ -119,16 +137,16 @@ describe('live Key Moment court run', () => {
     expect(setup.filter((e) => e.teamId === 'team-opp')).toHaveLength(5);
   });
 
-  it('gives the text outcome the same roll as decide() on the same seeded state', () => {
+  it('derives the outcome from the play, reproducibly for the same seed', () => {
     for (const actionId of ACTION_IDS) {
       for (const seed of [3, 17, 99]) {
         const run = runKeyMomentCourt(input(seed, actionId));
-        // Replay the same sequence by hand: setup first, then decide() on the shared RNG.
-        const rng = new SeededRng(seed);
-        const entities = buildKeyMomentCourt(input(seed, actionId), rng);
-        const start = createPossession(entities, { attributes: attrs(80), rng });
-        const expected = decide(start, actionId).outcome;
-        expect(run.outcome).toEqual(expected);
+        // The same seed always resolves to the same play and outcome.
+        expect(runKeyMomentCourt(input(seed, actionId)).outcome).toEqual(run.outcome);
+        // The outcome records the actor's ratings-based chance, adjusted by the play.
+        expect(run.outcome.successChance).toBeGreaterThanOrEqual(0);
+        expect(run.outcome.successChance).toBeLessThanOrEqual(1);
+        expect(run.outcome.actionId).toBe(actionId);
       }
     }
   });

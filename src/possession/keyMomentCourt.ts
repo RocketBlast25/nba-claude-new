@@ -8,7 +8,9 @@ import { SeededRng } from '../sim/core/random';
 import type { PlayerId, TeamId } from '../sim/core/types';
 import { STEP_MS } from './types';
 import { SPRINT_SPEED, DEFENDER_SPEED, stepTactics, type TacticalPlayer, type TacticalState } from './tactics';
-import { decide, type ActionId, type DecisionOutcome } from './decision';
+import { type ActionId, type DecisionOutcome } from './decision';
+import { resolvePlay } from './outcome';
+import { arcHeight } from './ballphysics';
 import { createPossession } from './engine';
 import { snapshotCourt, type CourtSnapshot } from './replay';
 import type { PossessionState } from './types';
@@ -28,6 +30,8 @@ export const RELEASE_FRAME = FRAME_COUNT - 4;
 const ARC_BULGE = 24;
 /** Height of each dribble bounce, in court units. */
 const DRIBBLE_BOUNCE = 6;
+/** Apex height of a shot arc, in court units above the floor. */
+const SHOT_APEX = 60;
 
 /** Hoop the carrier attacks: the one on the opposite half from its starting x. */
 export function attackingHoop(carrierX: number): { x: number; y: number } {
@@ -40,7 +44,10 @@ export function attackingHoop(carrierX: number): { x: number; y: number } {
  * spread to the wings and corners. Each defender shadows the offensive player at
  * the same index. Frame 0 is the setup, frame N-1 the end of the play.
  */
-function choreograph(state: PossessionState, actorId: PlayerId): CourtSnapshot[] {
+function choreograph(
+  state: PossessionState,
+  actorId: PlayerId,
+): { frames: CourtSnapshot[]; release: TacticalState } {
   const first = snapshotCourt(state);
   const carrier = first.players.find((p) => p.id === actorId) ?? { x: 470, y: 250 };
   const hoop = attackingHoop(carrier.x);
@@ -76,23 +83,34 @@ function choreograph(state: PossessionState, actorId: PlayerId): CourtSnapshot[]
   let tactical: TacticalState = { players, handlerId, spacing: 'five_out', timeMs: 0 };
 
   const frames: CourtSnapshot[] = [];
+  let release: TacticalState = tactical;
   const ticksPerFrame = Math.round(FRAME_MS / STEP_MS);
   for (let f = 0; f < FRAME_COUNT; f++) {
     if (f > 0) {
       for (let i = 0; i < ticksPerFrame; i++) tactical = stepTactics(tactical, attackingRight);
     }
+    if (f === RELEASE_FRAME) release = tactical;
     const byId = new Map(tactical.players.map((p) => [p.id, p]));
     const handler = byId.get(actorId)!;
     // Dribble bounce on the handler until release; the ball follows the handler's path.
     const dribbleLift = f <= RELEASE_FRAME ? Math.abs(Math.sin(f * Math.PI * 1.5)) * DRIBBLE_BOUNCE : 0;
-    const ballAt = { x: handler.pos.x, y: handler.pos.y - dribbleLift };
+    let ballAt: { x: number; y: number; z?: number } = { x: handler.pos.x, y: handler.pos.y - dribbleLift };
+    if (dribbleLift > 0) ballAt.z = dribbleLift;
+    if (f > RELEASE_FRAME) {
+      // Shot arc: the ball leaves the release point and rises on a parabola toward the hoop.
+      const u = (f - RELEASE_FRAME) / (FRAME_COUNT - 1 - RELEASE_FRAME);
+      const from = release.players.find((p) => p.id === actorId)?.pos ?? handler.pos;
+      const path = arcPoint(from, hoop, u);
+      const z = arcHeight(u, SHOT_APEX);
+      ballAt = z > 0 ? { x: path.x, y: path.y, z } : { x: path.x, y: path.y };
+    }
     const snapshotPlayers = first.players.map((p) => {
       const sim = byId.get(p.id);
       return sim ? { ...p, x: sim.pos.x, y: sim.pos.y } : p;
     });
     frames.push({ t: Math.round(f * FRAME_MS), ballPos: ballAt, players: snapshotPlayers });
   }
-  return frames;
+  return { frames, release };
 }
 
 /** Ball path after release: a straight line with a perpendicular bulge that peaks mid-flight. */
@@ -138,6 +156,8 @@ export interface KeyMomentCourtInput {
 export interface KeyMomentCourtRun {
   frames: CourtSnapshot[];
   outcome: DecisionOutcome;
+  /** Player who wins a miss on the rebound, or null when the play was not a missed shot. */
+  reboundWinnerId: string | null;
   /** Ids of the user's offense (actor first), so the court can style them. */
   offenseIds: PlayerId[];
   /** Ids of the defenders. */
@@ -183,6 +203,12 @@ export function buildKeyMomentCourt(input: KeyMomentCourtInput, rng: SeededRng):
   return entities;
 }
 
+/** A player's `rebounding` rating from the input, or a neutral 50 if not listed. */
+function reboundingOf(input: KeyMomentCourtInput, id: string): number {
+  const found = [input.actor, ...input.offense, ...input.defense].find((p) => p.id === id);
+  return found?.attributes.rebounding ?? 50;
+}
+
 /**
  * Runs the possession once from one seeded RNG: setup first, then the decision roll.
  * The frames are stepped from the state after the roll, so the last frame matches
@@ -193,12 +219,30 @@ export function runKeyMomentCourt(input: KeyMomentCourtInput): KeyMomentCourtRun
   const entities = buildKeyMomentCourt(input, rng);
   const attributes: Attributes = input.actor.attributes;
   const start = createPossession(entities, { attributes, rng });
-  const { state, outcome } = decide(start, input.actionId);
 
-  const frames = choreograph(state, input.actor.id);
+  const { frames, release } = choreograph(start, input.actor.id);
+  const byId = new Map(release.players.map((p) => [p.id, p]));
+  const shooter = byId.get(input.actor.id)!;
+  const hoop = attackingHoop(shooter.pos.x);
+  const defenders = release.players.filter((p) => p.side === 'defense');
+  const { outcome, reboundWinnerId } = resolvePlay(attributes, {
+    actionId: input.actionId,
+    shooter: shooter.pos,
+    shooterVel: shooter.vel,
+    hoop,
+    defenders: defenders.map((d) => ({ pos: d.pos, vel: d.vel })),
+    reboundCandidates: release.players.map((p) => ({
+      id: p.id,
+      pos: p.pos,
+      rebounding: reboundingOf(input, p.id),
+      offense: p.side === 'offense',
+    })),
+  }, rng);
+
   return {
     frames,
     outcome,
+    reboundWinnerId,
     offenseIds: [input.actor.id, ...input.offense.slice(0, 4).map((p) => p.id)],
     defenseIds: input.defense.slice(0, 5).map((p) => p.id),
     actorId: input.actor.id,

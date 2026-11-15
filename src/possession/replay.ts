@@ -4,7 +4,8 @@ import { COURT_HEIGHT, COURT_WIDTH, type CourtEntity, type PossessionState } fro
 export interface CourtSnapshot {
   /** Simulation time in milliseconds. */
   t: number;
-  ballPos: { x: number; y: number };
+  /** Ball height above the floor in court units. Omitted when the ball is on the ground. */
+  ballPos: { x: number; y: number; z?: number };
   players: { id: string; teamId: string | null; x: number; y: number }[];
 }
 
