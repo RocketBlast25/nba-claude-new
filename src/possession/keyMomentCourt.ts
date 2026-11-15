@@ -24,6 +24,8 @@ const HOOP_RIGHT = { x: 887.5, y: 250 };
 const RELEASE_FRAME = FRAME_COUNT - 4;
 /** Peak sideways offset of the ball path, in court units. */
 const ARC_BULGE = 24;
+/** Height of each dribble bounce, in court units. */
+const DRIBBLE_BOUNCE = 6;
 
 /** Hoop the carrier attacks: the one on the opposite half from its starting x. */
 export function attackingHoop(carrierX: number): { x: number; y: number } {
@@ -51,25 +53,31 @@ function choreograph(state: PossessionState, actorId: PlayerId, actionId: Action
   ];
   // Shots arc to the hoop, passes to the first teammate spot, resets keep the ball.
   const target = actionId === 'pass' ? spots[0]! : actionId === 'reset' ? null : hoop;
+  // A pass lands on the receiver's moving position, not a fixed placeholder.
+  const receiverStart = offense[1] ?? carrier;
+  const passTarget = (f: number) =>
+    easedBlend(receiverStart, spots[0]!, Math.min(1, f / (FRAME_COUNT - 1)));
   const frames: CourtSnapshot[] = [];
   for (let f = 0; f < FRAME_COUNT; f++) {
     const t = f / (FRAME_COUNT - 1);
-    const carrierAt = blend(carrier, hoop, t * 0.6);
+    const carrierAt = easedBlend(carrier, hoop, t * 0.6);
+    // Dribble bounce: the ball rises and falls with the carrier before release.
+    const dribbleLift = f <= RELEASE_FRAME ? Math.abs(Math.sin(f * Math.PI * 1.5)) * DRIBBLE_BOUNCE : 0;
     const ballAt =
       f <= RELEASE_FRAME || target === null
-        ? carrierAt
-        : arcPoint(blend(carrier, hoop, (RELEASE_FRAME / (FRAME_COUNT - 1)) * 0.6), target, (f - RELEASE_FRAME) / (FRAME_COUNT - 1 - RELEASE_FRAME));
+        ? { x: carrierAt.x, y: carrierAt.y - dribbleLift }
+        : arcPoint(easedBlend(carrier, hoop, (RELEASE_FRAME / (FRAME_COUNT - 1)) * 0.6), passTarget(f), (f - RELEASE_FRAME) / (FRAME_COUNT - 1 - RELEASE_FRAME));
     const players = first.players.map((p) => {
       if (p.id === actorId) return { ...p, ...carrierAt };
       const mateIdx = offense.findIndex((m) => m.id === p.id) - 1;
       if (mateIdx >= 0 && mateIdx < spots.length) {
-        return { ...p, ...blend(p, spots[mateIdx]!, t) };
+        return { ...p, ...easedBlend(p, spots[mateIdx]!, t) };
       }
       const defIdx = defense.findIndex((d) => d.id === p.id);
       if (defIdx >= 0) {
         const target = offense[defIdx % offense.length] ?? carrier;
         const shadow = { x: target.x + (hoop.x > target.x ? -18 : 18), y: target.y };
-        return { ...p, ...blend(p, shadow, t) };
+        return { ...p, ...easedBlend(p, shadow, t) };
       }
       return p;
     });
@@ -88,9 +96,19 @@ function arcPoint(from: { x: number; y: number }, to: { x: number; y: number }, 
   return { x: p.x - (dy / len) * bulge, y: p.y + (dx / len) * bulge };
 }
 
-/** Linear blend between two points, clamped to the court. */
+/** Linear blend between two points. */
 function blend(a: { x: number; y: number }, b: { x: number; y: number }, t: number) {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/** Smoothstep easing: starts and ends with zero velocity, so cuts look organic. */
+function ease(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+/** Eased blend for player paths: slow start, fast middle, slow arrival. */
+function easedBlend(a: { x: number; y: number }, b: { x: number; y: number }, t: number) {
+  return blend(a, b, ease(t));
 }
 
 export interface KeyMomentCourtInput {
