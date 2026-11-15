@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CourtSnapshot } from '../possession/replay';
 import { COURT_WIDTH, COURT_HEIGHT } from '../possession/types';
 import { RELEASE_FRAME } from '../possession/keyMomentCourt';
@@ -35,11 +35,25 @@ export function CourtReplay({
   autoPlay?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [progress, setProgress] = useState(0);
+  // The playhead lives in a ref and is drawn directly; React state only tracks the
+  // displayed frame index and the play/pause state, so it re-renders per frame, not per tick.
+  const progressRef = useRef(0);
+  const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(autoPlay);
   const last = Math.max(0, frames.length - 1);
-  const progressRef = useRef(0);
-  progressRef.current = progress;
+
+  const paint = useCallback(() => {
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx || frames.length === 0) return;
+    drawCourt(ctx, frames, progressRef.current, roles);
+    const shown = Math.min(last, Math.round(progressRef.current));
+    setFrameIndex((prev) => (prev === shown ? prev : shown));
+  }, [frames, roles, last]);
+
+  // Redraw when the frames or roles change, or the user scrubs (scrub calls paint directly).
+  useEffect(() => {
+    paint();
+  }, [paint]);
 
   // Progress is a 0..last fractional frame index, advanced by elapsed time.
   useEffect(() => {
@@ -51,27 +65,29 @@ export function CourtReplay({
       if (startedAt === null) startedAt = now;
       const next = startProgress + ((now - startedAt) / PLAYBACK_MS) * last;
       if (next >= last) {
-        setProgress(last);
+        progressRef.current = last;
+        paint();
         setPlaying(false);
         return;
       }
-      setProgress(next);
+      progressRef.current = next;
+      paint();
       raf = window.requestAnimationFrame(tick);
     };
     raf = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(raf);
-  }, [playing, last]);
+  }, [playing, last, paint]);
 
+  // Pause when the tab is hidden so background tabs do not keep scheduling frames.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx || frames.length === 0) return;
-    drawCourt(ctx, frames, progress, roles);
-  }, [frames, progress, roles]);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') setPlaying(false);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   if (frames.length === 0) return <p>No replay available.</p>;
-
-  const frameIndex = Math.min(last, Math.round(progress));
 
   return (
     <div>
@@ -91,7 +107,7 @@ export function CourtReplay({
           type="button"
           onClick={() => {
             progressRef.current = 0;
-            setProgress(0);
+            paint();
             setPlaying(true);
           }}
         >
@@ -102,11 +118,12 @@ export function CourtReplay({
           min={0}
           max={last}
           step="any"
-          value={progress}
+          value={frameIndex}
           aria-label="Scrub replay"
           onChange={(e) => {
             setPlaying(false);
-            setProgress(Number(e.target.value));
+            progressRef.current = Number(e.target.value);
+            paint();
           }}
         />
       </div>

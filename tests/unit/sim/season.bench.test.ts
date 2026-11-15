@@ -1,4 +1,4 @@
-import { it } from 'vitest';
+import { expect, it } from 'vitest';
 import { SIM_CONFIG } from '../../../src/sim/background/config';
 import { SeededRng } from '../../../src/sim/core/random';
 import { makeId, type TeamId } from '../../../src/sim/core/types';
@@ -24,8 +24,14 @@ it('measures one 1,230-game season', () => {
     return { id, conference, division: `${conference}-${Math.floor(i / 5) % 3}`, sim } as ScheduleTeam & { sim: SimTeam };
   });
 
+  // Warm-up run so JIT compilation does not count against the measured run.
+  simulateSeason(league, new SeededRng(1));
+
   const start = performance.now();
   const season = simulateSeason(league, new SeededRng(123));
   const ms = performance.now() - start;
   console.log(`BENCH season games=${season.gamesPlayed} ms=${ms.toFixed(1)}`);
+
+  expect(season.gamesPlayed).toBe(1230);
+  expect(ms).toBeLessThan(1000);
 });

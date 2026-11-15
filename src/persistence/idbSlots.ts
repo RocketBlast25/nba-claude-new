@@ -46,7 +46,22 @@ function openDb(factory: IDBFactory): Promise<IDBDatabase> {
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Another tab is upgrading the schema: close this connection so the upgrade is not blocked,
+      // and drop the cached handle so the next access reopens at the new version.
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
+    req.onblocked = () => {
+      // An older connection in another tab is still open and is holding up this open or upgrade.
+      // The request stays pending and completes once that tab closes its connection (it is
+      // asked to via onversionchange), so surface a rejection only if it never succeeds.
+      console.warn('IndexedDB open is blocked by another open tab; waiting for it to close.');
+    };
     req.onerror = () => {
       dbPromise = null;
       reject(req.error ?? new Error('IndexedDB open failed'));
