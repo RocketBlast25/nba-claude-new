@@ -89,7 +89,7 @@ describe('gameStore', () => {
     useGameStore.getState().queueMoments(moments);
     const before = useGameStore.getState().pendingMoments.length;
     expect(before).toBeGreaterThan(0);
-    const result = useGameStore.getState().resolveNextMoment('drive');
+    const result = useGameStore.getState().resolveNextMoment({ actionId: 'drive' });
     expect(result).not.toBeNull();
     const s = useGameStore.getState();
     expect(s.pendingMoments.length).toBe(before - 1);
@@ -97,7 +97,7 @@ describe('gameStore', () => {
   });
 
   it('returns null when resolving with an empty queue', () => {
-    expect(useGameStore.getState().resolveNextMoment('pass')).toBeNull();
+    expect(useGameStore.getState().resolveNextMoment({ actionId: 'pass' })).toBeNull();
   });
 
   it('runs the offseason, advances the season and sets a 30-pick draft board', () => {

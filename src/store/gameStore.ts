@@ -31,7 +31,7 @@ import {
   resolvePlayerSigning,
   type PlayerOffer,
 } from '../sim/career/freeAgency';
-import { resolveMoment, selectMoments } from '../sim/career/keyMoments';
+import { momentCourtOf, resolveMoment, selectMoments, type MomentChoice } from '../sim/career/keyMoments';
 import { createCustomPlayer, type ArchetypeId } from '../sim/career/customPlayer';
 import { createNewCareer, NEW_CAREER_TEAMS, type NewCareerOptions } from '../sim/career/newCareer';
 import type { AttributeKey, Player, Position } from '../sim/core/models';
@@ -48,7 +48,6 @@ import { checkRotation } from '../sim/league/rotation';
 import { LEAGUE_CONFIG } from '../sim/league/leagueConfig';
 import { checkTrade } from '../sim/league/trade';
 import { evaluateOffer } from '../sim/league/freeAgentOffer';
-import type { ActionId } from '../possession/decision';
 import { advanceCareerOffseason, runOffseasonEconomyWithOrder } from '../sim/career/careerLoop';
 import { simulateSeason, type GameBoxScoreRecord, type SeasonResult } from '../sim/league/season';
 import { runPlayoffs, type PlayoffResult } from '../sim/league/playoffs';
@@ -154,7 +153,7 @@ export interface GameStoreActions {
   /** Queues Key Moments drawn for the user's next game. */
   queueMoments: (moments: KeyMoment[]) => void;
   /** Resolves the front pending Key Moment with the user's chosen action. */
-  resolveNextMoment: (actionId: ActionId) => KeyMomentResult | null;
+  resolveNextMoment: (choice: MomentChoice) => KeyMomentResult | null;
   /** Runs the offseason: retirements, contracts, draft, free agency and roster top-up. */
   runOffseason: () => void;
   /** Spends skill points to raise one attribute of the controlled player by one point. */
@@ -350,12 +349,13 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   queueMoments: (moments) =>
     set((s) => ({ pendingMoments: [...s.pendingMoments, ...moments] })),
 
-  resolveNextMoment: (actionId) => {
+  resolveNextMoment: (choice) => {
     const { pendingMoments, seed, career } = get();
     const [next, ...rest] = pendingMoments;
-    if (!next) return null;
-    const rng = new SeededRng(seed + (career?.season ?? 0) + rest.length);
-    const result = resolveMoment(next, rng, () => actionId);
+    if (!next || !career) return null;
+    const rng = new SeededRng(seed + (career.season ?? 0) + rest.length);
+    const court = momentCourtOf(career, next);
+    const result = resolveMoment(next, court, rng, () => choice);
     set((s) => ({
       pendingMoments: rest,
       resolvedMoments: [...s.resolvedMoments, result],

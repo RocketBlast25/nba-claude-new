@@ -90,6 +90,8 @@ describe('resumable season (suspend and resume)', () => {
     expect(result.moment.userControlled).toBe(true);
     expect(result.state.nextGame).toBe(result.moment.gameIndex + 1);
     expect(result.state.pending).toEqual(result.moment);
+    expect(result.moment.overtimes).toBeGreaterThanOrEqual(0);
+    expect(result.moment.quarter).toBe(4 + result.moment.overtimes);
   });
 
   it('resumes to completion with every game played exactly once', () => {

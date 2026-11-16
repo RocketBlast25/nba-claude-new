@@ -19,7 +19,7 @@ function hydrateCareer(seed: number) {
   store.startCareer({ career, userTeamId: career.userTeamId, seed, leagueTeams: league });
   store.playSeason(league);
   store.queueMoments(drawUserMoments(useGameStore.getState().career!, 'g1', 3));
-  useGameStore.getState().resolveNextMoment('drive');
+  useGameStore.getState().resolveNextMoment({ actionId: 'drive' });
   useGameStore.getState().runOffseason();
 }
 

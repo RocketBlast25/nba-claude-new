@@ -36,6 +36,10 @@ export interface PendingKeyMoment {
   /** Final score of the game the moment belongs to. */
   homePoints: number;
   awayPoints: number;
+  /** Overtime periods played in the game (0 for regulation). */
+  overtimes: number;
+  /** Quarter the game ended in: 4 for regulation, 5 or more for overtime. */
+  quarter: number;
   /** Always true: the moment is controlled by the user's team. */
   userControlled: true;
 }
@@ -157,6 +161,8 @@ export function advanceSeason(
         awayId: game.awayId,
         homePoints: result.home.points,
         awayPoints: result.away.points,
+        overtimes: result.overtimes,
+        quarter: 4 + result.overtimes,
         userControlled: true,
       };
       current = { ...current, pending: moment };

@@ -70,8 +70,8 @@ export function KeyMomentOverlay() {
   const scenario = selectScenario(
     {
       margin: 'homePoints' in moment ? Math.abs(moment.homePoints - moment.awayPoints) : 0,
-      quarter: moment.trigger === 'clutch_fourth' || moment.trigger === 'game_winner' ? 4 : 2,
-      overtimes: 0,
+      quarter: 'quarter' in moment ? moment.quarter : 4,
+      overtimes: 'overtimes' in moment ? moment.overtimes : 0,
     },
     scenarioRng,
   );
