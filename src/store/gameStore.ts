@@ -32,6 +32,7 @@ import {
   type PlayerOffer,
 } from '../sim/career/freeAgency';
 import { momentCourtOf, resolveMoment, selectMoments, type MomentChoice } from '../sim/career/keyMoments';
+import { runKeyMomentCourt, type KeyMomentCourtRun } from '../possession/keyMomentCourt';
 import { createCustomPlayer, type ArchetypeId } from '../sim/career/customPlayer';
 import { createNewCareer, NEW_CAREER_TEAMS, type NewCareerOptions } from '../sim/career/newCareer';
 import type { AttributeKey, Player, Position } from '../sim/core/models';
@@ -143,13 +144,13 @@ export interface GameStoreActions {
   /** Plays games until the next Key Moment or the end of the regular season. */
   advanceSeasonRun: () => AdvanceResult | null;
   /** Applies the user's decision to the pending Key Moment and continues the season. */
-  resolveSeasonMoment: (decision: UserDecision) => AdvanceResult | null;
+  resolveSeasonMoment: (decision: UserDecision) => (AdvanceResult & { court: KeyMomentCourtRun | null }) | null;
   /** Starts a resumable playoff run that pauses on user playoff games. */
   startPlayoffsRun: (teams: (ScheduleTeam & { sim: SimTeam })[]) => PlayoffAdvanceResult;
   /** Plays playoff games until the next user game or the Finals. */
   advancePlayoffsRun: () => PlayoffAdvanceResult | null;
   /** Applies the user's decision to the pending playoff moment and continues. */
-  resolvePlayoffMoment: (decision: UserDecision) => PlayoffAdvanceResult | null;
+  resolvePlayoffMoment: (decision: UserDecision) => (PlayoffAdvanceResult & { court: KeyMomentCourtRun | null }) | null;
   /** Queues Key Moments drawn for the user's next game. */
   queueMoments: (moments: KeyMoment[]) => void;
   /** Resolves the front pending Key Moment with the user's chosen action. */
@@ -235,6 +236,64 @@ export function setHallOfFameStorage(storage: HallOfFameStorage): void {
   hallOfFameStorage = storage;
 }
 
+/**
+ * Runs the Key Moment court for a pending season moment the user has just decided, so the
+ * replay and the result come from the same seeded run. Null when the decision carries no
+ * play (the legacy success/reward path), or when there is no moment to play.
+ */
+function courtForDecision(
+  career: CareerState | null,
+  moment: { gameIndex: number; homeId: TeamId; awayId: TeamId } | null,
+  decision: UserDecision,
+  seed: number,
+): KeyMomentCourtRun | null {
+  if (!career || !moment || !decision.actionId) return null;
+  return courtRunFor(career, moment, decision, seed);
+}
+
+function courtRunFor(
+  career: CareerState,
+  moment: { gameIndex: number; homeId: TeamId; awayId: TeamId },
+  decision: UserDecision,
+  seed: number,
+): KeyMomentCourtRun | null {
+  const playerId = career.playerMode?.playerId;
+  if (!playerId || !decision.actionId) return null;
+  const actor = career.players.find((p) => p.id === playerId);
+  if (!actor) return null;
+  const userTeamId = career.userTeamId as TeamId;
+  const opponentId = (moment.homeId === userTeamId ? moment.awayId : moment.homeId) as TeamId;
+  const playersOf = (teamId: TeamId) =>
+    (career.rosters[teamId] ?? [])
+      .map((id) => career.players.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => p !== undefined && p.id !== actor.id);
+  return runKeyMomentCourt({
+    actor,
+    offense: playersOf(userTeamId),
+    defense: playersOf(opponentId),
+    offenseTeamId: userTeamId,
+    defenseTeamId: opponentId,
+    actionId: decision.actionId,
+    modifier: decision.modifier,
+    seed: seed + career.season + moment.gameIndex,
+  });
+}
+
+/**
+ * Runs the court for a play on the pending moment without advancing the run, so the
+ * overlay can show the replay before the user commits. Committing calls
+ * resolveSeasonMoment/resolvePlayoffMoment with the same play, which replays the same
+ * seeded court, so the replay shown and the stats recorded agree.
+ */
+export function previewMomentCourt(
+  career: CareerState | null,
+  pending: { gameIndex: number; homeId: TeamId; awayId: TeamId } | null,
+  play: MomentChoice,
+  seed: number,
+): KeyMomentCourtRun | null {
+  return courtForDecision(career, pending, { success: false, reward: 0, actionId: play.actionId, modifier: play.modifier }, seed);
+}
+
 export const useGameStore = create<GameStore>()((set, get) => ({
   ...initialState,
 
@@ -304,12 +363,13 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   },
 
   resolveSeasonMoment: (decision) => {
-    const { seasonRun, leagueTeams } = get();
+    const { seasonRun, leagueTeams, career, seed } = get();
     if (!seasonRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
+    const court = courtForDecision(career, seasonRun.pending, decision, seed);
     const result = resumeSeason(seasonRun, decision, sim, leagueTeams);
     set(seasonRunCommit(get(), result));
-    return result;
+    return { ...result, court };
   },
 
   startPlayoffsRun: (teams) => {
@@ -337,13 +397,14 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   },
 
   resolvePlayoffMoment: (decision) => {
-    const { playoffsRun, leagueTeams } = get();
+    const { playoffsRun, leagueTeams, career, seed } = get();
     if (!playoffsRun || !leagueTeams) return null;
     const sim = new Map(leagueTeams.map((t) => [t.id, t.sim]));
+    const court = courtForDecision(career, playoffsRun.pending, decision, seed);
     const playedLines: GameBoxScore[] = [];
     const result = resumePlayoffsRun(playoffsRun, decision, playoffGameRunner(sim, (lines) => playedLines.push(...lines)));
     set(playoffsRunCommit(get(), result, playedLines));
-    return result;
+    return { ...result, court };
   },
 
   queueMoments: (moments) =>

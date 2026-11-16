@@ -1,4 +1,5 @@
 import type { GameOutcome, StandingRow } from '../league/standings';
+import type { ActionId } from '../../possession/decision';
 import { computeStandings, sortStandings } from '../league/standings';
 import { buildSchedule, type ScheduledGame, type ScheduleTeam } from '../league/schedule';
 import { simulateGame, type SimTeam, type GameResult } from '../background/gameSim';
@@ -69,6 +70,10 @@ export interface UserDecision {
   success: boolean;
   /** Reward credited to the user's team, applied to the next game's context. */
   reward: number;
+  /** The play the user picked, when the moment was resolved through the court. */
+  actionId?: ActionId;
+  /** Situational modifier of the picked play. */
+  modifier?: { multiplier: number; bonus: number };
 }
 
 export type AdvanceResult =

@@ -2,16 +2,16 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ACTION_RULES, decisionCards, type ActionId } from '../possession/decision';
 import type { CourtSnapshot } from '../possession/replay';
 import type { TeamId } from '../sim/core/types';
-import { createRoll } from './keyMomentRoll';
 import { selectScenario, type ScenarioPlay } from '../possession/scenarios';
 import { SeededRng } from '../sim/core/random';
 import { CourtReplay, type CourtRoles } from './CourtReplay';
 import type { UserDecision } from '../sim/season/resumableSeason';
-import { useGameStore } from '../store/gameStore';
+import { previewMomentCourt, useGameStore } from '../store/gameStore';
 import { currentPlayoffsRun, currentSeasonRun, snapshotOf, teamLabel } from './careerViewModel';
 
 interface Roll {
   actionId: ActionId;
+  modifier?: { multiplier: number; bonus: number };
   success: boolean;
   reward: number;
   frames: CourtSnapshot[];
@@ -83,31 +83,28 @@ export function KeyMomentOverlay() {
   const opponentId: TeamId = moment.homeId === userTeamId ? moment.awayId : moment.homeId;
 
   const choose = (play: ScenarioPlay) => {
-    const actionId = play.actionId;
-    const run = createRoll({
-      actor: player,
-      offense: playersOf(userTeamId),
-      defense: playersOf(opponentId),
-      offenseTeamId: userTeamId,
-      defenseTeamId: opponentId,
-      actionId,
-      modifier: play.modifier,
-      seed: rollSeed,
-    });
+    // The replay comes from the store's court for this play, without advancing the run.
+    const court = previewMomentCourt(career, moment, { actionId: play.actionId, modifier: play.modifier }, rollSeed);
+    if (!court) return;
     const labels: NonNullable<CourtRoles['labels']> = {};
     for (const p of [player, ...playersOf(userTeamId), ...playersOf(opponentId)]) {
       labels[p.id] = { number: jerseyNumber(p.id), position: p.position };
     }
     setRoll({
-      actionId,
-      success: run.outcome.success,
-      reward: run.outcome.reward,
-      frames: run.frames,
-      roles: { offenseIds: run.offenseIds, defenseIds: run.defenseIds, actorId: run.actorId, labels },
+      actionId: play.actionId,
+      modifier: play.modifier,
+      success: court.outcome.success,
+      reward: court.outcome.reward,
+      frames: court.frames,
+      roles: { offenseIds: court.offenseIds, defenseIds: court.defenseIds, actorId: court.actorId, labels },
     });
   };
 
-  const continueRun = (decision: UserDecision) => {
+  // Committing advances the store run with the same play, so the replay the user just
+  // watched and the recorded stats come from one seeded court.
+  const continueRun = () => {
+    if (!roll) return;
+    const decision: UserDecision = { success: roll.success, reward: roll.reward, actionId: roll.actionId, modifier: roll.modifier };
     if (kind === 'season') resolveSeasonMoment(decision);
     else resolvePlayoffMoment(decision);
     setRoll(null);
@@ -161,7 +158,7 @@ export function KeyMomentOverlay() {
             <button
               type="button"
               className="primary"
-              onClick={() => continueRun({ success: roll.success, reward: roll.reward })}
+              onClick={continueRun}
               ref={firstButtonRef}
             >
               {kind === 'playoffs' ? 'Continue Playoffs' : 'Continue Season'}

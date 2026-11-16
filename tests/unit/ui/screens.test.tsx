@@ -119,6 +119,31 @@ describe('career UI', () => {
     expect(within(dialog).getByRole('button', { name: 'Replay' })).toBeTruthy();
   });
 
+  it('resolves the picked play through the store and records it on the run', () => {
+    const league = buildLeague(11);
+    const career = careerFrom(league);
+    const store = useGameStore.getState();
+    store.startCareer({ career, userTeamId: career.userTeamId, seed: 11, leagueTeams: league });
+    const player = (career.rosters[career.userTeamId] ?? [])
+      .map((id) => career.players.find((p) => p.id === id)!)
+      .sort((a, b) => b.overall - a.overall)[0]!;
+    expect(store.startPlayerCareer(player.id)).toEqual({ ok: true });
+    store.startSeasonRun(league);
+
+    render(createElement(App));
+    const dialog = screen.getByRole('dialog');
+    const resolvedBefore = useGameStore.getState().seasonRun?.resolved.length ?? 0;
+    fireEvent.click(within(dialog).getByRole('button', { name: /Drive/ }));
+    // The replay is shown from the store's court, but the moment is not advanced yet.
+    expect(within(dialog).getByRole('img', { name: /Court replay/ })).toBeTruthy();
+    expect(useGameStore.getState().seasonRun?.resolved.length ?? 0).toBe(resolvedBefore);
+    fireEvent.click(within(dialog).getByRole('button', { name: /Continue Season/ }));
+    // Committing resolves the moment through the store and records the play it used.
+    const run = useGameStore.getState().seasonRun!;
+    expect(run.resolved.length).toBe(resolvedBefore + 1);
+    expect(run.resolved[run.resolved.length - 1]!.decision.actionId).toBe('drive');
+  });
+
   it('renders the overlay standalone without pending moments as nothing', () => {
     render(createElement(KeyMomentOverlay));
     expect(screen.queryByRole('dialog')).toBeNull();
