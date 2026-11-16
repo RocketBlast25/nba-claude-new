@@ -29,9 +29,10 @@ function bash(): string {
 }
 
 export default defineConfig({
-  testDir: 'tests/integration',
+  testDir: 'tests/e2e',
   forbidOnly: !!process.env.CI,
   use: {
+    baseURL: process.env.E2E_BASE_URL ?? 'http://127.0.0.1:5173',
     viewport: { width: 1280, height: 720 },
     launchOptions: {
       executablePath: checkBrowser(),
